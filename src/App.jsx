@@ -18,7 +18,12 @@ export default function App() {
   )
 
   const handleLoaded = (text, name) => {
+    console.log("📥 File caricato:", name)
+
     const points = parseGpxText(text)
+
+    console.log("📊 Points dopo parse:", points.length)
+
     setRawPoints(points)
     setTrackName(name)
   }

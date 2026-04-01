@@ -14,10 +14,21 @@ export default function CesiumMap({
     stopped: false
   })
 
+  // 🔵 INIT VIEWER
   useEffect(() => {
     const Cesium = initCesium()
 
-    if (!containerRef.current || viewerRef.current) return
+    console.log("🟢 INIT Cesium viewer")
+
+    if (!containerRef.current) {
+      console.warn("⚠️ containerRef non pronto")
+      return
+    }
+
+    if (viewerRef.current) {
+      console.warn("⚠️ viewer già inizializzato")
+      return
+    }
 
     const viewer = new Cesium.Viewer(containerRef.current, {
       terrain: Cesium.Terrain.fromWorldTerrain(),
@@ -28,30 +39,59 @@ export default function CesiumMap({
       sceneModePicker: false
     })
 
+    console.log("✅ Viewer creato")
+
     viewer.scene.globe.depthTestAgainstTerrain = true
     viewerRef.current = viewer
 
+    // debug globale (super utile)
+    window.viewer = viewer
+
     return () => {
+      console.log("🧹 Destroy viewer")
+
       if (flightRef.current.animationId) {
         cancelAnimationFrame(flightRef.current.animationId)
       }
+
       if (!viewer.isDestroyed()) viewer.destroy()
       viewerRef.current = null
     }
   }, [])
 
+  // 🔵 RENDER TRACK
   useEffect(() => {
     const Cesium = initCesium()
     const viewer = viewerRef.current
-    if (!viewer) return
+
+    console.log("🗺️ useEffect trackPoints trigger")
+    console.log("📊 trackPoints:", trackPoints?.length)
+
+    if (!viewer) {
+      console.warn("⚠️ viewer non pronto")
+      return
+    }
 
     viewer.entities.removeAll()
 
-    if (!trackPoints?.length) return
+    if (!trackPoints?.length) {
+      console.warn("⚠️ Nessun punto da renderizzare")
+      return
+    }
 
-    const positions = trackPoints.map((p) =>
-      Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.ele || 0)
-    )
+    const positions = trackPoints.map((p, i) => {
+      if (i < 3) {
+        console.log("📍 Sample point:", p)
+      }
+
+      return Cesium.Cartesian3.fromDegrees(
+        p.lon,
+        p.lat,
+        p.ele || 0
+      )
+    })
+
+    console.log("✅ Positions create:", positions.length)
 
     viewer.entities.add({
       polyline: {
@@ -61,13 +101,34 @@ export default function CesiumMap({
       }
     })
 
+    console.log("🚀 Zoom to entities")
+
     viewer.zoomTo(viewer.entities)
   }, [trackPoints])
 
+  // 🔵 FLYOVER
   useEffect(() => {
     const Cesium = initCesium()
     const viewer = viewerRef.current
-    if (!viewer || !trackPoints?.length || !shouldPlay) return
+
+    console.log("🎬 Play trigger")
+    console.log("➡️ shouldPlay:", shouldPlay)
+    console.log("📊 trackPoints:", trackPoints?.length)
+
+    if (!viewer) {
+      console.warn("⚠️ viewer non pronto")
+      return
+    }
+
+    if (!trackPoints?.length) {
+      console.warn("⚠️ no trackPoints → niente animazione")
+      return
+    }
+
+    if (!shouldPlay) {
+      console.warn("⚠️ shouldPlay falso → skip")
+      return
+    }
 
     const state = flightRef.current
     state.stopped = false
@@ -77,8 +138,14 @@ export default function CesiumMap({
 
     const cameraHeightOffset = 80
 
+    console.log("🚀 START flyover")
+
     const tick = (ts) => {
-      if (state.stopped) return
+      if (state.stopped) {
+        console.log("⛔ animazione stoppata")
+        return
+      }
+
       if (lastTs == null) lastTs = ts
 
       const dt = (ts - lastTs) / 1000
@@ -87,10 +154,18 @@ export default function CesiumMap({
       index += dt * speed * 8
 
       const i = Math.floor(index)
-      if (i >= trackPoints.length - 1) return
+
+      if (i >= trackPoints.length - 1) {
+        console.log("🏁 Fine animazione")
+        return
+      }
 
       const current = trackPoints[i]
       const next = trackPoints[i + 1]
+
+      if (i % 50 === 0) {
+        console.log("🎯 Frame:", i, current)
+      }
 
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
@@ -125,16 +200,32 @@ export default function CesiumMap({
     state.animationId = requestAnimationFrame(tick)
 
     return () => {
-      if (state.animationId) cancelAnimationFrame(state.animationId)
+      console.log("🧹 cleanup flyover")
+
+      if (state.animationId) {
+        cancelAnimationFrame(state.animationId)
+      }
     }
   }, [shouldPlay, trackPoints, speed])
 
+  // 🔵 STOP
   useEffect(() => {
     if (!stopSignal) return
+
+    console.log("🛑 STOP signal ricevuto")
+
     const state = flightRef.current
     state.stopped = true
-    if (state.animationId) cancelAnimationFrame(state.animationId)
+
+    if (state.animationId) {
+      cancelAnimationFrame(state.animationId)
+    }
   }, [stopSignal])
 
-  return <div ref={containerRef} style={{ width: '100%', height: '70vh' }} />
+  return (
+    <div
+      ref={containerRef}
+      style={{ width: '100%', height: '70vh' }}
+    />
+  )
 }
