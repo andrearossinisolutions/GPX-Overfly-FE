@@ -182,17 +182,12 @@ export default function CesiumMap({
       viewer.camera.flyTo({
         destination,
         orientation: {
-          direction: Cesium.Cartesian3.normalize(
-            Cesium.Cartesian3.subtract(
-              target,
-              destination,
-              new Cesium.Cartesian3()
-            ),
-            new Cesium.Cartesian3()
-          )
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-30),
+            roll: 0
         },
         duration: 0
-      })
+        })
 
       state.animationId = requestAnimationFrame(tick)
     }
