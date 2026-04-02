@@ -233,6 +233,38 @@ function computeCurvatureFactor(points, distances, distanceProgress, sampleDista
   )
 }
 
+function computeLocalSignedTurn(points, distances, distanceProgress, sampleDistance) {
+  const totalDistance = distances[distances.length - 1] || 0
+
+  const p0 = interpolateAlongPath(
+    points,
+    distances,
+    Math.max(0, distanceProgress - sampleDistance)
+  )
+  const p1 = interpolateAlongPath(
+    points,
+    distances,
+    Math.max(0, distanceProgress - sampleDistance * 0.2)
+  )
+  const p2 = interpolateAlongPath(
+    points,
+    distances,
+    Math.min(totalDistance, distanceProgress + sampleDistance * 0.2)
+  )
+  const p3 = interpolateAlongPath(
+    points,
+    distances,
+    Math.min(totalDistance, distanceProgress + sampleDistance)
+  )
+
+  if (!p0 || !p1 || !p2 || !p3) return 0
+
+  const headingBefore = computeHeadingRadians(p0, p1)
+  const headingAfter = computeHeadingRadians(p2, p3)
+
+  return wrapAngle(headingAfter - headingBefore)
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -244,7 +276,8 @@ export default function CesiumMap({
   const flightRef = useRef({
     animationId: null,
     stopped: false,
-    speedFactor: 1
+    speedFactor: 1,
+    roll: 0
   })
 
   const smoothedPath = useMemo(() => {
@@ -335,6 +368,7 @@ export default function CesiumMap({
     const state = flightRef.current
     state.stopped = false
     state.speedFactor = 1
+    state.roll = 0
 
     if (state.animationId) {
       cancelAnimationFrame(state.animationId)
@@ -347,15 +381,21 @@ export default function CesiumMap({
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
     const baseDistancePerSecond = totalDistance * 0.04 * speed
     const tangentLookAheadDistance = totalDistance * 0.006
-    const curvatureSampleDistance = totalDistance * 0.1
 
+    // finestra ampia per la velocità
+    const curvatureSampleDistance = totalDistance * 0.1
     const minCurveSpeedFactor = 0.5
     const speedResponse = 1.5
+
+    // finestra stretta per il roll
+    const bankSampleDistance = totalDistance * 0.008
+    const maxRoll = Cesium.Math.toRadians(5)
+    const rollResponse = 3.0
 
     const cameraHeightOffset = 500
     const pitch = Cesium.Math.toRadians(-10)
 
-    console.log('🚀 START flyover rounded-corners + curve slowdown')
+    console.log('🚀 START flyover rounded-corners + curve slowdown + local bank')
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -374,8 +414,8 @@ export default function CesiumMap({
       const targetSpeedFactor =
         1 - curvatureFactor * (1 - minCurveSpeedFactor)
 
-      const t = 1 - Math.exp(-speedResponse * dt)
-      state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, t)
+      const speedT = 1 - Math.exp(-speedResponse * dt)
+      state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, speedT)
 
       distanceProgress += dt * baseDistancePerSecond * state.speedFactor
 
@@ -403,6 +443,32 @@ export default function CesiumMap({
         return
       }
 
+      const signedTurn = computeLocalSignedTurn(
+        smoothedPath,
+        pathDistances,
+        distanceProgress,
+        bankSampleDistance
+      )
+
+      // attiva il bank solo su virata locale
+      const rawTurnAmount = smoothstep(
+        Cesium.Math.toRadians(3.5),
+        Cesium.Math.toRadians(14),
+        Math.abs(signedTurn)
+        )
+
+      // curva più gentile: sale più lentamente all'inizio e si appiattisce meglio
+      const localTurnAmount = rawTurnAmount * rawTurnAmount
+
+      // inverti il segno se inclina dal lato sbagliato
+      const targetRoll =
+        clamp(signedTurn / Cesium.Math.toRadians(12), -1, 1) *
+        localTurnAmount *
+        maxRoll
+
+      const rollT = 1 - Math.exp(-rollResponse * dt)
+      state.roll = lerp(state.roll, targetRoll, rollT)
+
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
         current.lat,
@@ -416,7 +482,7 @@ export default function CesiumMap({
         orientation: {
           heading,
           pitch,
-          roll: 0
+          roll: state.roll
         }
       })
 
