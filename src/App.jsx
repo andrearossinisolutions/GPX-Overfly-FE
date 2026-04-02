@@ -53,7 +53,7 @@ export default function App() {
   }
 
   const overlayCardStyle = {
-    background: 'rgba(15, 23, 42, 0.82)',
+    background: 'rgba(15, 23, 42, 0.5)',
     color: '#fff',
     border: '1px solid rgba(255,255,255,0.12)',
     borderRadius: 20,
@@ -101,7 +101,7 @@ export default function App() {
               >
                 GPS Overfly Preview
               </div>
-              <div style={{ opacity: 0.82, lineHeight: 1.45 }}>
+              <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
                 Carica una traccia GPX e avvia il flyover.
               </div>
             </div>
@@ -112,81 +112,39 @@ export default function App() {
                 gap: 16
               }}
             >
-              <div>
-                <label
-                  htmlFor="gpx-file"
+              {!trackName
+                ?<div>
+                  <label
+                    htmlFor="gpx-file"
+                    style={{
+                      display: 'inline-block',
+                      padding: '12px 16px',
+                      borderRadius: 12,
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      cursor: 'pointer',
+                      fontWeight: 600
+                    }}
+                  >
+                    Carica file GPX
+                  </label>
+                  <input
+                    id="gpx-file"
+                    type="file"
+                    accept=".gpx"
+                    onChange={handleFile}
+                    style={{ display: 'none' }}
+                  />
+                </div>
+                : <div
                   style={{
-                    display: 'inline-block',
-                    padding: '12px 16px',
-                    borderRadius: 12,
-                    background: 'rgba(255,255,255,0.08)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    cursor: 'pointer',
-                    fontWeight: 600
+                    minHeight: 22,
+                    opacity: trackName ? 1 : 0.75
                   }}
                 >
-                  Carica file GPX
-                </label>
-                <input
-                  id="gpx-file"
-                  type="file"
-                  accept=".gpx"
-                  onChange={handleFile}
-                  style={{ display: 'none' }}
-                />
-              </div>
-
-              <div
-                style={{
-                  minHeight: 22,
-                  opacity: trackName ? 1 : 0.75
-                }}
-              >
-                {trackName
-                  ? `Traccia: ${trackName} — ${trackPoints.length} punti`
-                  : 'Nessun file caricato'}
-              </div>
-
-              <div>
-                <div style={{ marginBottom: 8, fontWeight: 600 }}>
-                  Velocità
+                  {trackName} — {trackPoints.length} punti
                 </div>
-
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 8,
-                    flexWrap: 'wrap'
-                  }}
-                >
-                  {speedOptions.map((option) => {
-                    const active = speed === option
-
-                    return (
-                      <button
-                        key={option}
-                        onClick={() => setSpeed(option)}
-                        style={{
-                          padding: '10px 12px',
-                          borderRadius: 10,
-                          border: active
-                            ? '1px solid rgba(255,255,255,0.9)'
-                            : '1px solid rgba(255,255,255,0.12)',
-                          background: active
-                            ? 'rgba(255,255,255,0.18)'
-                            : 'rgba(255,255,255,0.06)',
-                          color: '#fff',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          minWidth: 58
-                        }}
-                      >
-                        {option}x
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+              }
 
               {error && (
                 <div

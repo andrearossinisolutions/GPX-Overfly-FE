@@ -390,6 +390,61 @@ export default function CesiumMap({
       }
     })
 
+    const markerHeightOffset = pathHeightOffset + 20
+
+    const start = smoothedPath[0]
+    const end = smoothedPath[smoothedPath.length - 1]
+
+    viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(
+        start.lon,
+        start.lat,
+        (start.ele || 0) + markerHeightOffset
+      ),
+      point: {
+        pixelSize: 12,
+        color: Cesium.Color.LIME,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2
+      },
+      label: {
+        text: 'Takeoff',
+        font: 'bold 18px sans-serif',
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -18),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
+      }
+    })
+
+    viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(
+        end.lon,
+        end.lat,
+        (end.ele || 0) + markerHeightOffset
+      ),
+      point: {
+        pixelSize: 12,
+        color: Cesium.Color.RED,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2
+      },
+      label: {
+        text: 'Landing',
+        font: 'bold 18px sans-serif',
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -18),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY
+      }
+    })
+
     flyToPathTopDown(viewer, positions)
   }, [smoothedPath])
 
