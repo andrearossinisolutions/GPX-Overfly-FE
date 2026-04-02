@@ -290,7 +290,8 @@ export default function CesiumMap({
   trackPoints,
   shouldPlay,
   stopSignal,
-  speed
+  speed,
+  onPositionChange
 }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
@@ -756,6 +757,14 @@ export default function CesiumMap({
         phase === 'arrival-level' || phase === 'outro'
           ? computeHeadingRadians(endBeforePoint, endPoint)
           : computeHeadingRadians(current, ahead)
+
+      if (onPositionChange && current) {
+        onPositionChange({
+          lat: current.lat,
+          lon: current.lon,
+          ele: current.ele || 0
+        })
+      }
 
       viewer.camera.setView({
         destination,

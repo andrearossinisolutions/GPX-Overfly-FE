@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import CesiumMap from './components/CesiumMap'
 import { parseGpxText } from './utils/parseGpx'
 import { buildFlightSamples } from './utils/buildFlightSamples'
+import MiniMap2D from './components/MiniMap2D'
 
 export default function App() {
   const [rawPoints, setRawPoints] = useState([])
@@ -11,6 +12,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1)
   const [hasStarted, setHasStarted] = useState(false)
   const [error, setError] = useState('')
+  const [currentPoint, setCurrentPoint] = useState(null)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
 
@@ -54,6 +56,7 @@ export default function App() {
   const handleStop = () => {
     setStopNonce((n) => n + 1)
     setHasStarted(false)
+    setCurrentPoint(null)
   }
 
   const overlayCardStyle = {
@@ -73,6 +76,13 @@ export default function App() {
         shouldPlay={playNonce}
         stopSignal={stopNonce}
         speed={speed}
+        onPositionChange={setCurrentPoint}
+      />
+
+      <MiniMap2D
+        points={trackPoints}
+        currentPoint={currentPoint}
+        visible={hasStarted && trackPoints.length > 0}
       />
 
       {!hasStarted && (
