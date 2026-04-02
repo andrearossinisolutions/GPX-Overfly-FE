@@ -103,7 +103,7 @@ export default function App() {
                   marginBottom: 8
                 }}
               >
-                GPS Overfly Preview
+                GPX Overfly
               </div>
               <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
                 Carica una traccia GPX e avvia il flyover.
