@@ -11,6 +11,11 @@ function lerp(a, b, t) {
   return a + (b - a) * t
 }
 
+function easeInOut(t) {
+  const x = clamp(t, 0, 1)
+  return x * x * (3 - 2 * x)
+}
+
 function distance2D(a, b) {
   const dx = b.lon - a.lon
   const dy = b.lat - a.lat
@@ -377,25 +382,39 @@ export default function CesiumMap({
 
     let distanceProgress = 0
     let lastTs = null
+    let phase = 'intro'
+    let phaseElapsed = 0
 
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
     const baseDistancePerSecond = totalDistance * 0.04 * speed
     const tangentLookAheadDistance = totalDistance * 0.006
 
-    // finestra ampia per la velocità
     const curvatureSampleDistance = totalDistance * 0.1
     const minCurveSpeedFactor = 0.5
     const speedResponse = 1.5
 
-    // finestra stretta per il roll
     const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
-    const rollResponse = 3.0
 
     const cameraHeightOffset = 500
-    const pitch = Cesium.Math.toRadians(-10)
+    const startEndHeightSupplier = 2000
+    const highCameraHeightOffset = cameraHeightOffset + startEndHeightSupplier
 
-    console.log('🚀 START flyover rounded-corners + curve slowdown + local bank')
+    const cruisePitch = Cesium.Math.toRadians(-10)
+    const verticalPitch = Cesium.Math.toRadians(-90)
+
+    const introDuration = 5
+    const outroDuration = 5
+
+    const startPoint = smoothedPath[0]
+    const startAheadPoint =
+      smoothedPath[Math.min(1, smoothedPath.length - 1)] || startPoint
+
+    const endPoint = smoothedPath[smoothedPath.length - 1]
+    const endBeforePoint =
+      smoothedPath[Math.max(smoothedPath.length - 2, 0)] || endPoint
+
+    console.log('🚀 START flyover intro + cruise + outro')
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -403,93 +422,138 @@ export default function CesiumMap({
       if (lastTs == null) lastTs = ts
       const dt = (ts - lastTs) / 1000
       lastTs = ts
+      phaseElapsed += dt
 
-      const curvatureFactor = computeCurvatureFactor(
-        smoothedPath,
-        pathDistances,
-        distanceProgress,
-        curvatureSampleDistance
-      )
+      let current = null
+      let ahead = null
+      let dynamicPitch = cruisePitch
+      let dynamicHeightOffset = cameraHeightOffset
+      let dynamicRoll = 0
 
-      const targetSpeedFactor =
-        1 - curvatureFactor * (1 - minCurveSpeedFactor)
+      if (phase === 'intro') {
+        const t = easeInOut(phaseElapsed / introDuration)
 
-      const speedT = 1 - Math.exp(-speedResponse * dt)
-      state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, speedT)
+        current = startPoint
+        ahead = startAheadPoint
+        dynamicPitch = lerp(verticalPitch, cruisePitch, t)
+        dynamicHeightOffset = lerp(highCameraHeightOffset, cameraHeightOffset, t)
+        dynamicRoll = 0
 
-      distanceProgress += dt * baseDistancePerSecond * state.speedFactor
-
-      if (distanceProgress >= totalDistance) {
-        console.log('🏁 Fine animazione')
-        state.animationId = null
-        return
-      }
-
-      const current = interpolateAlongPath(
-        smoothedPath,
-        pathDistances,
-        distanceProgress
-      )
-
-      const ahead = interpolateAlongPath(
-        smoothedPath,
-        pathDistances,
-        Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
-      )
-
-      if (!current || !ahead) {
-        console.warn('⚠️ interpolazione fallita')
-        state.animationId = null
-        return
-      }
-
-      const bankLeadDistance = totalDistance * 0.0018
-
-      const signedTurn = computeLocalSignedTurn(
-        smoothedPath,
-        pathDistances,
-        Math.min(distanceProgress + bankLeadDistance, totalDistance),
-        bankSampleDistance
-      )
-
-      // attiva il bank solo su virata locale
-      const rawTurnAmount = smoothstep(
-        Cesium.Math.toRadians(2.8),
-        Cesium.Math.toRadians(13),
-        Math.abs(signedTurn)
+        if (t >= 1) {
+          phase = 'cruise'
+          phaseElapsed = 0
+        }
+      } else if (phase === 'cruise') {
+        const curvatureFactor = computeCurvatureFactor(
+          smoothedPath,
+          pathDistances,
+          distanceProgress,
+          curvatureSampleDistance
         )
 
-      // curva più gentile: sale più lentamente all'inizio e si appiattisce meglio
-      const localTurnAmount = rawTurnAmount * rawTurnAmount * rawTurnAmount
+        const targetSpeedFactor =
+          1 - curvatureFactor * (1 - minCurveSpeedFactor)
 
-      // inverti il segno se inclina dal lato sbagliato
-      const targetRoll =
-        clamp(signedTurn / Cesium.Math.toRadians(12), -1, 1) *
-        localTurnAmount *
-        maxRoll
+        const speedT = 1 - Math.exp(-speedResponse * dt)
+        state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, speedT)
 
-      const rollInResponse = 3.5
-      const rollOutResponse = 1.5
-      const activeRollResponse =
-      Math.abs(targetRoll) < Math.abs(state.roll) ? rollOutResponse : rollInResponse
+        distanceProgress += dt * baseDistancePerSecond * state.speedFactor
 
-      const rollT = 1 - Math.exp(-activeRollResponse * dt)
-      state.roll = lerp(state.roll, targetRoll, rollT)
+        if (distanceProgress >= totalDistance) {
+          distanceProgress = totalDistance
+          phase = 'outro'
+          phaseElapsed = 0
+        }
+
+        current = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          distanceProgress
+        )
+
+        ahead = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+        )
+
+        if (!current || !ahead) {
+          console.warn('⚠️ interpolazione fallita')
+          state.animationId = null
+          return
+        }
+
+        const bankLeadDistance = totalDistance * 0.0018
+
+        const signedTurn = computeLocalSignedTurn(
+          smoothedPath,
+          pathDistances,
+          Math.min(distanceProgress + bankLeadDistance, totalDistance),
+          bankSampleDistance
+        )
+
+        const rawTurnAmount = smoothstep(
+          Cesium.Math.toRadians(2.8),
+          Cesium.Math.toRadians(13),
+          Math.abs(signedTurn)
+        )
+
+        const localTurnAmount = rawTurnAmount * rawTurnAmount * rawTurnAmount
+
+        const targetRoll =
+          clamp(signedTurn / Cesium.Math.toRadians(12), -1, 1) *
+          localTurnAmount *
+          maxRoll
+
+        const rollInResponse = 3.5
+        const rollOutResponse = 1.5
+        const activeRollResponse =
+          Math.abs(targetRoll) < Math.abs(state.roll)
+            ? rollOutResponse
+            : rollInResponse
+
+        const rollT = 1 - Math.exp(-activeRollResponse * dt)
+        state.roll = lerp(state.roll, targetRoll, rollT)
+
+        dynamicPitch = cruisePitch
+        dynamicHeightOffset = cameraHeightOffset
+        dynamicRoll = state.roll
+      } else if (phase === 'outro') {
+        const t = easeInOut(phaseElapsed / outroDuration)
+
+        current = endPoint
+        ahead = endPoint
+        dynamicPitch = lerp(cruisePitch, verticalPitch, t)
+        dynamicHeightOffset = lerp(cameraHeightOffset, highCameraHeightOffset, t)
+
+        const rollT = 1 - Math.exp(-3.0 * dt)
+        state.roll = lerp(state.roll, 0, rollT)
+        dynamicRoll = state.roll
+
+        if (t >= 1) {
+          console.log('🏁 Fine animazione')
+          state.animationId = null
+          return
+        }
+      }
 
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
         current.lat,
-        Math.min((current.ele || 0) + cameraHeightOffset, 1500)
+        Math.min((current.ele || 0) + dynamicHeightOffset, 3000)
       )
 
-      const heading = computeHeadingRadians(current, ahead)
+      const heading =
+        phase === 'outro'
+          ? computeHeadingRadians(endBeforePoint, endPoint)
+          : computeHeadingRadians(current, ahead)
 
       viewer.camera.setView({
         destination,
         orientation: {
           heading,
-          pitch,
-          roll: state.roll
+          pitch: dynamicPitch,
+          roll: dynamicRoll
         }
       })
 
