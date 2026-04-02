@@ -12,6 +12,8 @@ export default function App() {
   const [hasStarted, setHasStarted] = useState(false)
   const [error, setError] = useState('')
 
+  const speedOptions = [0.25, 0.5, 1, 2, 4]
+
   const trackPoints = useMemo(() => {
     return buildFlightSamples(rawPoints, 1)
   }, [rawPoints])
@@ -149,31 +151,40 @@ export default function App() {
                 <div style={{ marginBottom: 8, fontWeight: 600 }}>
                   Velocità
                 </div>
+
                 <div
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: 12
+                    gap: 8,
+                    flexWrap: 'wrap'
                   }}
                 >
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="3"
-                    step="0.1"
-                    value={speed}
-                    onChange={(e) => setSpeed(Number(e.target.value))}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      minWidth: 48,
-                      textAlign: 'right',
-                      fontVariantNumeric: 'tabular-nums'
-                    }}
-                  >
-                    {speed.toFixed(1)}x
-                  </div>
+                  {speedOptions.map((option) => {
+                    const active = speed === option
+
+                    return (
+                      <button
+                        key={option}
+                        onClick={() => setSpeed(option)}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 10,
+                          border: active
+                            ? '1px solid rgba(255,255,255,0.9)'
+                            : '1px solid rgba(255,255,255,0.12)',
+                          background: active
+                            ? 'rgba(255,255,255,0.18)'
+                            : 'rgba(255,255,255,0.06)',
+                          color: '#fff',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          minWidth: 58
+                        }}
+                      >
+                        {option}x
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -212,7 +223,7 @@ export default function App() {
                     cursor: trackPoints.length ? 'pointer' : 'not-allowed'
                   }}
                 >
-                  Play
+                  TAKEOFF
                 </button>
               </div>
             </div>
@@ -236,30 +247,45 @@ export default function App() {
               minWidth: 280
             }}
           >
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 700,
-                marginBottom: 10,
-                opacity: 0.95
-              }}
-            >
-              Playback
-            </div>
-
             <div style={{ marginBottom: 10 }}>
-              <div style={{ marginBottom: 6, fontSize: 13, opacity: 0.9 }}>
-                Velocità: {speed.toFixed(1)}x
+              <div style={{ marginBottom: 8, fontWeight: 600 }}>
+                Velocità
               </div>
-              <input
-                type="range"
-                min="0.5"
-                max="3"
-                step="0.1"
-                value={speed}
-                onChange={(e) => setSpeed(Number(e.target.value))}
-                style={{ width: '100%' }}
-              />
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  flexWrap: 'wrap'
+                }}
+              >
+                {speedOptions.map((option) => {
+                  const active = speed === option
+
+                  return (
+                    <button
+                      key={option}
+                      onClick={() => setSpeed(option)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: 10,
+                        border: active
+                          ? '1px solid rgba(255,255,255,0.9)'
+                          : '1px solid rgba(255,255,255,0.12)',
+                        background: active
+                          ? 'rgba(255,255,255,0.18)'
+                          : 'rgba(255,255,255,0.06)',
+                        color: '#fff',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        minWidth: 52
+                      }}
+                    >
+                      {option}x
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -275,7 +301,7 @@ export default function App() {
                   cursor: 'pointer'
                 }}
               >
-                Stop
+                LAND NOW
               </button>
             </div>
           </div>

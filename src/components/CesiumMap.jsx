@@ -295,6 +295,7 @@ export default function CesiumMap({
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const pathPositionsRef = useRef(null)
+  const speedRef = useRef(speed)
   const flightRef = useRef({
     animationId: null,
     stopped: false,
@@ -318,6 +319,10 @@ export default function CesiumMap({
   const pathDistances = useMemo(() => {
     return cumulativeDistances(smoothedPath)
   }, [smoothedPath])
+
+  useEffect(() => {
+    speedRef.current = speed
+  }, [speed])
 
   useEffect(() => {
     Cesium = initCesium()
@@ -412,7 +417,7 @@ export default function CesiumMap({
     let phaseElapsed = 0
 
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
-    const baseDistancePerSecond = totalDistance * 0.04 * speed
+    const baseDistancePerSecondBase = totalDistance * 0.04
     const tangentLookAheadDistance = totalDistance * 0.006
     const finalApproachDistance = totalDistance * 0.08
 
@@ -495,7 +500,7 @@ export default function CesiumMap({
         dynamicPitch = lerp(groundPitch, climbPitch, t)
         dynamicRoll = 0
 
-        distanceProgress += dt * baseDistancePerSecond * 0.35
+        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * 0.35
 
         if (t >= 1) {
           phase = 'intro-settle'
@@ -520,7 +525,7 @@ export default function CesiumMap({
         dynamicPitch = lerp(climbPitch, cruisePitch, t)
         dynamicRoll = 0
 
-        distanceProgress += dt * baseDistancePerSecond * 0.7
+        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * 0.7
 
         if (t >= 1) {
           phase = 'cruise'
@@ -540,7 +545,7 @@ export default function CesiumMap({
         const speedT = 1 - Math.exp(-speedResponse * dt)
         state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, speedT)
 
-        distanceProgress += dt * baseDistancePerSecond * state.speedFactor
+        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
 
         if (distanceProgress >= totalDistance - finalApproachDistance) {
           distanceProgress = Math.min(distanceProgress, totalDistance)
@@ -602,7 +607,7 @@ export default function CesiumMap({
         dynamicHeightOffset = cruiseHeightOffset
         dynamicRoll = state.roll
       } else if (phase === 'final-approach') {
-        distanceProgress += dt * baseDistancePerSecond * state.speedFactor
+        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
 
         if (distanceProgress >= totalDistance) {
           distanceProgress = totalDistance
@@ -708,7 +713,7 @@ export default function CesiumMap({
         state.animationId = null
       }
     }
-  }, [shouldPlay, smoothedPath, pathDistances, speed])
+  }, [shouldPlay, smoothedPath, pathDistances])
 
   useEffect(() => {
     if (!stopSignal) return
