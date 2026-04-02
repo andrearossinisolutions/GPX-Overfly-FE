@@ -345,9 +345,15 @@ export default function CesiumMap({
 
     if (!smoothedPath?.length) return
 
+    const pathHeightOffset = 200
+
     const positions = smoothedPath.map((p, i) => {
       if (i < 5) console.log('📍 path sample', p)
-      return Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.ele || 0)
+      return Cesium.Cartesian3.fromDegrees(
+        p.lon,
+        p.lat,
+        (p.ele || 0) + pathHeightOffset
+      )
     })
 
     const entity = viewer.entities.add({
