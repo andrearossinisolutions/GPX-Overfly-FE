@@ -382,7 +382,7 @@ export default function CesiumMap({
 
     let distanceProgress = 0
     let lastTs = null
-    let phase = 'intro'
+    let phase = 'intro-drop'
     let phaseElapsed = 0
 
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
@@ -396,15 +396,21 @@ export default function CesiumMap({
     const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
 
-    const cameraHeightOffset = 500
-    const startEndHeightSupplier = 2000
-    const highCameraHeightOffset = cameraHeightOffset + startEndHeightSupplier
+    const cruiseHeightOffset = 500
+    const introHighHeightOffset = 2500
+    const outroHeightOffset = 2500
+    const introGroundOffset = 80
 
-    const cruisePitch = Cesium.Math.toRadians(-10)
     const verticalPitch = Cesium.Math.toRadians(-90)
+    const groundPitch = Cesium.Math.toRadians(0)
+    const climbPitch = Cesium.Math.toRadians(10)
+    const cruisePitch = Cesium.Math.toRadians(-10)
 
-    const introDuration = 5
-    const outroDuration = 5
+    const introDropDuration = 3.2
+    const introPullUpDuration = 1.4
+    const introSettleDuration = 1.8
+    const arrivalLevelDuration = 1.2
+    const outroDuration = 5.0
 
     const startPoint = smoothedPath[0]
     const startAheadPoint =
@@ -414,7 +420,7 @@ export default function CesiumMap({
     const endBeforePoint =
       smoothedPath[Math.max(smoothedPath.length - 2, 0)] || endPoint
 
-    console.log('🚀 START flyover intro + cruise + outro')
+    console.log('🚀 START flyover intro-drop + intro-pull-up + intro-settle + cruise + arrival-level + outro')
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -427,17 +433,67 @@ export default function CesiumMap({
       let current = null
       let ahead = null
       let dynamicPitch = cruisePitch
-      let dynamicHeightOffset = cameraHeightOffset
+      let dynamicHeightOffset = cruiseHeightOffset
       let dynamicRoll = 0
 
-      if (phase === 'intro') {
-        const t = easeInOut(phaseElapsed / introDuration)
+      if (phase === 'intro-drop') {
+        const t = easeInOut(phaseElapsed / introDropDuration)
 
         current = startPoint
         ahead = startAheadPoint
-        dynamicPitch = lerp(verticalPitch, cruisePitch, t)
-        dynamicHeightOffset = lerp(highCameraHeightOffset, cameraHeightOffset, t)
+        dynamicHeightOffset = lerp(introHighHeightOffset, introGroundOffset, t)
+        dynamicPitch = lerp(verticalPitch, groundPitch, t)
         dynamicRoll = 0
+
+        if (t >= 1) {
+          phase = 'intro-pull-up'
+          phaseElapsed = 0
+        }
+      } else if (phase === 'intro-pull-up') {
+        const t = easeInOut(phaseElapsed / introPullUpDuration)
+
+        current = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          distanceProgress
+        ) || startPoint
+
+        ahead = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+        ) || startAheadPoint
+
+        dynamicHeightOffset = lerp(introGroundOffset, cruiseHeightOffset, t)
+        dynamicPitch = lerp(groundPitch, climbPitch, t)
+        dynamicRoll = 0
+
+        distanceProgress += dt * baseDistancePerSecond * 0.35
+
+        if (t >= 1) {
+          phase = 'intro-settle'
+          phaseElapsed = 0
+        }
+      } else if (phase === 'intro-settle') {
+        const t = easeInOut(phaseElapsed / introSettleDuration)
+
+        current = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          distanceProgress
+        ) || startPoint
+
+        ahead = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+        ) || startAheadPoint
+
+        dynamicHeightOffset = cruiseHeightOffset
+        dynamicPitch = lerp(climbPitch, cruisePitch, t)
+        dynamicRoll = 0
+
+        distanceProgress += dt * baseDistancePerSecond * 0.7
 
         if (t >= 1) {
           phase = 'cruise'
@@ -461,7 +517,7 @@ export default function CesiumMap({
 
         if (distanceProgress >= totalDistance) {
           distanceProgress = totalDistance
-          phase = 'outro'
+          phase = 'arrival-level'
           phaseElapsed = 0
         }
 
@@ -516,15 +572,31 @@ export default function CesiumMap({
         state.roll = lerp(state.roll, targetRoll, rollT)
 
         dynamicPitch = cruisePitch
-        dynamicHeightOffset = cameraHeightOffset
+        dynamicHeightOffset = cruiseHeightOffset
         dynamicRoll = state.roll
+      } else if (phase === 'arrival-level') {
+        const t = easeInOut(phaseElapsed / arrivalLevelDuration)
+
+        current = endPoint
+        ahead = endPoint
+        dynamicHeightOffset = cruiseHeightOffset
+        dynamicPitch = lerp(cruisePitch, groundPitch, t)
+
+        const rollT = 1 - Math.exp(-3.0 * dt)
+        state.roll = lerp(state.roll, 0, rollT)
+        dynamicRoll = state.roll
+
+        if (t >= 1) {
+          phase = 'outro'
+          phaseElapsed = 0
+        }
       } else if (phase === 'outro') {
         const t = easeInOut(phaseElapsed / outroDuration)
 
         current = endPoint
         ahead = endPoint
-        dynamicPitch = lerp(cruisePitch, verticalPitch, t)
-        dynamicHeightOffset = lerp(cameraHeightOffset, highCameraHeightOffset, t)
+        dynamicHeightOffset = lerp(cruiseHeightOffset, outroHeightOffset, t)
+        dynamicPitch = lerp(groundPitch, verticalPitch, t)
 
         const rollT = 1 - Math.exp(-3.0 * dt)
         state.roll = lerp(state.roll, 0, rollT)
@@ -537,14 +609,17 @@ export default function CesiumMap({
         }
       }
 
+      if (!current) current = startPoint
+      if (!ahead) ahead = startAheadPoint
+
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
         current.lat,
-        Math.min((current.ele || 0) + dynamicHeightOffset, 3000)
+        Math.min((current.ele || 0) + dynamicHeightOffset, 4000)
       )
 
       const heading =
-        phase === 'outro'
+        phase === 'arrival-level' || phase === 'outro'
           ? computeHeadingRadians(endBeforePoint, endPoint)
           : computeHeadingRadians(current, ahead)
 
