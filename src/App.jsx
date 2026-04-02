@@ -13,6 +13,7 @@ export default function App() {
   const [hasStarted, setHasStarted] = useState(false)
   const [error, setError] = useState('')
   const [currentPoint, setCurrentPoint] = useState(null)
+  const [recordEnabled, setRecordEnabled] = useState(false)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
 
@@ -77,6 +78,8 @@ export default function App() {
         stopSignal={stopNonce}
         speed={speed}
         onPositionChange={setCurrentPoint}
+        recordEnabled={recordEnabled}
+        recordingFileName={trackName ? trackName.replace(/\.gpx$/i, '-recording.gpx') : 'recording.gpx'}
       />
 
       <MiniMap2D
@@ -177,40 +180,72 @@ export default function App() {
               <div
                 style={{
                   display: 'flex',
-                  justifyContent: 'flex-end',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
                   gap: 12,
                   marginTop: 4
                 }}
               >
-                { trackName && <button
-                  onClick={handleReset}
+                <label
                   style={{
-                    padding: '12px 18px',
-                    borderRadius: 12,
-                    border: 'none',
-                    background: '#fff',
-                    color: '#0f172a',
-                    fontWeight: 700,
-                    cursor: 'pointer'
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 14,
+                    opacity: 0.9,
+                    pointerEvents: trackName ? 'auto' : 'none'
                   }}
                 >
-                  Unload
-                </button>}
-                <button
-                  onClick={handlePlay}
-                  disabled={!trackPoints.length}
+                  <input
+                    type="checkbox"
+                    checked={recordEnabled}
+                    onChange={(e) => setRecordEnabled(e.target.checked)}
+                    disabled={!trackName}
+                    style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
+                  />
+                  Record
+                </label>
+
+                <div
                   style={{
-                    padding: '12px 18px',
-                    borderRadius: 12,
-                    border: 'none',
-                    background: trackPoints.length ? '#fff' : 'rgba(255,255,255,0.25)',
-                    color: '#0f172a',
-                    fontWeight: 700,
-                    cursor: trackPoints.length ? 'pointer' : 'not-allowed'
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    gap: 12
                   }}
                 >
-                  TAKEOFF
-                </button>
+                  {trackName && (
+                    <button
+                      onClick={handleReset}
+                      style={{
+                        padding: '12px 18px',
+                        borderRadius: 12,
+                        border: 'none',
+                        background: '#fff',
+                        color: '#0f172a',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Unload
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handlePlay}
+                    disabled={!trackPoints.length}
+                    style={{
+                      padding: '12px 18px',
+                      borderRadius: 12,
+                      border: 'none',
+                      background: trackPoints.length ? '#fff' : 'rgba(255,255,255,0.25)',
+                      color: '#0f172a',
+                      fontWeight: 700,
+                      cursor: trackPoints.length ? 'pointer' : 'not-allowed'
+                    }}
+                  >
+                    TAKEOFF
+                  </button>
+                </div>
               </div>
             </div>
           </div>

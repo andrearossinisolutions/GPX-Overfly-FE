@@ -286,17 +286,61 @@ function flyToPathTopDown(viewer, positions) {
   })
 }
 
+function getSupportedRecordingMimeType() {
+  const candidates = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ]
+
+  for (const mimeType of candidates) {
+    if (window.MediaRecorder?.isTypeSupported?.(mimeType)) {
+      return mimeType
+    }
+  }
+
+  return ''
+}
+
+function sanitizeFilename(name = 'gps-overfly') {
+  return name
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-z0-9-_]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'gps-overfly'
+}
+
+function downloadRecording(chunks, filenameBase = 'gps-overfly') {
+  if (!chunks?.length) return
+
+  const blob = new Blob(chunks, { type: 'video/webm' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${sanitizeFilename(filenameBase)}.webm`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
   stopSignal,
   speed,
-  onPositionChange
+  onPositionChange,
+  recordEnabled = false,
+  recordingFileName = 'gps-overfly'
 }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const pathPositionsRef = useRef(null)
   const speedRef = useRef(speed)
+  const recorderRef = useRef(null)
+  const recordedChunksRef = useRef([])
+  const recordingActiveRef = useRef(false)
+  const recordingFileNameRef = useRef(recordingFileName)
+
   const flightRef = useRef({
     animationId: null,
     stopped: false,
@@ -327,6 +371,62 @@ export default function CesiumMap({
   }, [speed])
 
   useEffect(() => {
+    recordingFileNameRef.current = recordingFileName
+  }, [recordingFileName])
+
+  const stopRecording = (shouldDownload = true) => {
+    const recorder = recorderRef.current
+    if (!recorder || recorder.state === 'inactive') return
+
+    recorder.onstop = () => {
+      recordingActiveRef.current = false
+
+      if (shouldDownload) {
+        downloadRecording(
+          recordedChunksRef.current,
+          recordingFileNameRef.current
+        )
+      }
+
+      recordedChunksRef.current = []
+      recorderRef.current = null
+    }
+
+    recorder.stop()
+  }
+
+  const startRecording = () => {
+    const viewer = viewerRef.current
+    if (!viewer || recordingActiveRef.current) return
+
+    const canvas = viewer.scene?.canvas
+    if (!canvas?.captureStream || !window.MediaRecorder) {
+      console.warn('⚠️ Recording non supportato in questo browser')
+      return
+    }
+
+    const stream = canvas.captureStream(60)
+    const mimeType = getSupportedRecordingMimeType()
+
+    recordedChunksRef.current = []
+
+    const recorder = new MediaRecorder(
+      stream,
+      mimeType ? { mimeType } : undefined
+    )
+
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunksRef.current.push(event.data)
+      }
+    }
+
+    recorderRef.current = recorder
+    recordingActiveRef.current = true
+    recorder.start()
+  }
+
+  useEffect(() => {
     Cesium = initCesium()
 
     if (!containerRef.current || viewerRef.current) return
@@ -343,6 +443,7 @@ export default function CesiumMap({
     })
 
     viewer.scene.globe.depthTestAgainstTerrain = true
+    viewer.resolutionScale = 1.5
     viewerRef.current = viewer
     window.viewer = viewer
 
@@ -352,6 +453,11 @@ export default function CesiumMap({
       if (flightRef.current.animationId) {
         cancelAnimationFrame(flightRef.current.animationId)
       }
+
+      if (recordingActiveRef.current) {
+        stopRecording(false)
+      }
+
       if (!viewer.isDestroyed()) viewer.destroy()
       viewerRef.current = null
     }
@@ -468,6 +574,10 @@ export default function CesiumMap({
       state.animationId = null
     }
 
+    if (recordEnabled) {
+      startRecording()
+    }
+
     let distanceProgress = 0
     let lastTs = null
     let phase = 'intro-drop'
@@ -504,7 +614,7 @@ export default function CesiumMap({
     const startPoint = smoothedPath[0]
     const startAheadPoint =
       smoothedPath[Math.min(1, smoothedPath.length - 1)] || startPoint
-    
+
     const introStartDestination = Cesium.Cartesian3.fromDegrees(
       startPoint.lon,
       startPoint.lat,
@@ -610,7 +720,8 @@ export default function CesiumMap({
         const speedT = 1 - Math.exp(-speedResponse * dt)
         state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, speedT)
 
-        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
+        distanceProgress +=
+          dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
 
         if (distanceProgress >= totalDistance - finalApproachDistance) {
           distanceProgress = Math.min(distanceProgress, totalDistance)
@@ -672,7 +783,8 @@ export default function CesiumMap({
         dynamicHeightOffset = cruiseHeightOffset
         dynamicRoll = state.roll
       } else if (phase === 'final-approach') {
-        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
+        distanceProgress +=
+          dt * baseDistancePerSecondBase * speedRef.current * state.speedFactor
 
         if (distanceProgress >= totalDistance) {
           distanceProgress = totalDistance
@@ -740,6 +852,11 @@ export default function CesiumMap({
         if (t >= 1) {
           console.log('🏁 Fine animazione')
           state.animationId = null
+
+          if (recordEnabled) {
+            stopRecording(true)
+          }
+
           return
         }
       }
@@ -779,38 +896,42 @@ export default function CesiumMap({
     }
 
     const startFlightTick = () => {
-  if (state.stopped) return
-    state.transitioningToStart = false
-    state.animationId = requestAnimationFrame(tick)
-  }
-
-  state.transitioningToStart = true
-
-  viewer.camera.flyTo({
-    destination: introStartDestination,
-    orientation: {
-      heading: introStartHeading,
-      pitch: verticalPitch,
-      roll: 0
-    },
-    duration: 1.6,
-    easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
-    complete: startFlightTick,
-    cancel: () => {
+      if (state.stopped) return
       state.transitioningToStart = false
+      state.animationId = requestAnimationFrame(tick)
     }
-  })
 
-  return () => {
-    state.transitioningToStart = false
-    viewer.camera.cancelFlight()
+    state.transitioningToStart = true
 
-    if (state.animationId) {
-      cancelAnimationFrame(state.animationId)
-      state.animationId = null
+    viewer.camera.flyTo({
+      destination: introStartDestination,
+      orientation: {
+        heading: introStartHeading,
+        pitch: verticalPitch,
+        roll: 0
+      },
+      duration: 1.6,
+      easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
+      complete: startFlightTick,
+      cancel: () => {
+        state.transitioningToStart = false
+      }
+    })
+
+    return () => {
+      state.transitioningToStart = false
+      viewer.camera.cancelFlight()
+
+      if (recordingActiveRef.current) {
+        stopRecording(true)
+      }
+
+      if (state.animationId) {
+        cancelAnimationFrame(state.animationId)
+        state.animationId = null
+      }
     }
-  }
-  }, [shouldPlay, smoothedPath, pathDistances])
+  }, [shouldPlay, smoothedPath, pathDistances, recordEnabled, onPositionChange])
 
   useEffect(() => {
     if (!stopSignal) return
@@ -820,7 +941,6 @@ export default function CesiumMap({
     const pathPositions = pathPositionsRef.current
 
     state.stopped = true
-
     state.transitioningToStart = false
 
     if (viewer) {
@@ -834,6 +954,10 @@ export default function CesiumMap({
 
     state.roll = 0
     state.speedFactor = 1
+
+    if (recordingActiveRef.current) {
+      stopRecording(true)
+    }
 
     if (viewer && pathPositions) {
       flyToPathTopDown(viewer, pathPositions)
