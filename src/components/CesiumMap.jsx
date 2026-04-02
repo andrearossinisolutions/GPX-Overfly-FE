@@ -388,6 +388,7 @@ export default function CesiumMap({
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
     const baseDistancePerSecond = totalDistance * 0.04 * speed
     const tangentLookAheadDistance = totalDistance * 0.006
+    const finalApproachDistance = totalDistance * 0.08
 
     const curvatureSampleDistance = totalDistance * 0.1
     const minCurveSpeedFactor = 0.5
@@ -515,9 +516,9 @@ export default function CesiumMap({
 
         distanceProgress += dt * baseDistancePerSecond * state.speedFactor
 
-        if (distanceProgress >= totalDistance) {
-          distanceProgress = totalDistance
-          phase = 'arrival-level'
+        if (distanceProgress >= totalDistance - finalApproachDistance) {
+          distanceProgress = Math.min(distanceProgress, totalDistance)
+          phase = 'final-approach'
           phaseElapsed = 0
         }
 
@@ -574,13 +575,51 @@ export default function CesiumMap({
         dynamicPitch = cruisePitch
         dynamicHeightOffset = cruiseHeightOffset
         dynamicRoll = state.roll
+      } else if (phase === 'final-approach') {
+        distanceProgress += dt * baseDistancePerSecond * state.speedFactor
+
+        if (distanceProgress >= totalDistance) {
+          distanceProgress = totalDistance
+          phase = 'arrival-level'
+          phaseElapsed = 0
+        }
+
+        current = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          distanceProgress
+        )
+
+        ahead = interpolateAlongPath(
+          smoothedPath,
+          pathDistances,
+          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+        )
+
+        if (!current || !ahead) {
+          console.warn('⚠️ interpolazione fallita')
+          state.animationId = null
+          return
+        }
+
+        const approachStart = totalDistance - finalApproachDistance
+        const t = easeInOut(
+          (distanceProgress - approachStart) / finalApproachDistance
+        )
+
+        dynamicHeightOffset = lerp(cruiseHeightOffset, introGroundOffset, t)
+        dynamicPitch = lerp(cruisePitch, groundPitch, t)
+
+        const rollT = 1 - Math.exp(-3.0 * dt)
+        state.roll = lerp(state.roll, 0, rollT)
+        dynamicRoll = state.roll
       } else if (phase === 'arrival-level') {
         const t = easeInOut(phaseElapsed / arrivalLevelDuration)
 
         current = endPoint
         ahead = endPoint
-        dynamicHeightOffset = cruiseHeightOffset
-        dynamicPitch = lerp(cruisePitch, groundPitch, t)
+        dynamicHeightOffset = introGroundOffset
+        dynamicPitch = groundPitch
 
         const rollT = 1 - Math.exp(-3.0 * dt)
         state.roll = lerp(state.roll, 0, rollT)
@@ -595,7 +634,7 @@ export default function CesiumMap({
 
         current = endPoint
         ahead = endPoint
-        dynamicHeightOffset = lerp(cruiseHeightOffset, outroHeightOffset, t)
+        dynamicHeightOffset = lerp(introGroundOffset, outroHeightOffset, t)
         dynamicPitch = lerp(groundPitch, verticalPitch, t)
 
         const rollT = 1 - Math.exp(-3.0 * dt)
