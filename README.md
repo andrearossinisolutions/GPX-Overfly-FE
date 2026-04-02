@@ -1,4 +1,4 @@
-# 🚀 GPS Overfly Preview
+# 🚀 GPX Overfly
 
 Web app per visualizzare una traccia GPX come un **flyover 3D animato** sopra il terreno, con camera cinematografica stile drone/flight simulator.
 
