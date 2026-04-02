@@ -270,6 +270,22 @@ function computeLocalSignedTurn(points, distances, distanceProgress, sampleDista
   return wrapAngle(headingAfter - headingBefore)
 }
 
+function flyToPathTopDown(viewer, positions) {
+  if (!viewer || !positions?.length || !Cesium) return
+
+  const boundingSphere = Cesium.BoundingSphere.fromPoints(positions)
+  const range = Math.max(boundingSphere.radius * 3.0, 1500)
+
+  viewer.camera.flyToBoundingSphere(boundingSphere, {
+    duration: 1.2,
+    offset: new Cesium.HeadingPitchRange(
+      0,
+      Cesium.Math.toRadians(-90),
+      range
+    )
+  })
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -278,7 +294,7 @@ export default function CesiumMap({
 }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
-  const pathEntityRef = useRef(null)
+  const pathPositionsRef = useRef(null)
   const flightRef = useRef({
     animationId: null,
     stopped: false,
@@ -343,6 +359,7 @@ export default function CesiumMap({
     if (!viewer) return
 
     viewer.entities.removeAll()
+    pathPositionsRef.current = null
 
     if (!smoothedPath?.length) return
 
@@ -357,7 +374,9 @@ export default function CesiumMap({
       )
     })
 
-    const entity = viewer.entities.add({
+    pathPositionsRef.current = positions
+
+    viewer.entities.add({
       polyline: {
         positions,
         width: 4,
@@ -366,10 +385,7 @@ export default function CesiumMap({
       }
     })
 
-    pathEntityRef.current = entity
-    viewer.zoomTo(entity)
-
-    viewer.zoomTo(entity)
+    flyToPathTopDown(viewer, positions)
   }, [smoothedPath])
 
   useEffect(() => {
@@ -699,7 +715,7 @@ export default function CesiumMap({
 
     const state = flightRef.current
     const viewer = viewerRef.current
-    const pathEntity = pathEntityRef.current
+    const pathPositions = pathPositionsRef.current
 
     state.stopped = true
 
@@ -711,25 +727,8 @@ export default function CesiumMap({
     state.roll = 0
     state.speedFactor = 1
 
-    if (viewer && pathEntity) {
-      const boundingSphere = new Cesium.BoundingSphere()
-
-      viewer.dataSourceDisplay.getBoundingSphere(
-        pathEntity,
-        false,
-        boundingSphere
-      )
-
-      const range = Math.max(boundingSphere.radius * 3, 1500)
-
-      viewer.camera.flyToBoundingSphere(boundingSphere, {
-        duration: 1.2,
-        offset: new Cesium.HeadingPitchRange(
-          0,
-          Cesium.Math.toRadians(-90),
-          range
-        )
-      })
+    if (viewer && pathPositions) {
+      flyToPathTopDown(viewer, pathPositions)
     }
   }, [stopSignal])
 
