@@ -32,14 +32,6 @@ function angleBetweenDirs(inDir, outDir) {
   return Math.acos(d)
 }
 
-function pointAlong(from, dir, dist) {
-  return {
-    lon: from.lon + dir.x * dist,
-    lat: from.lat + dir.y * dist,
-    ele: from.ele || 0
-  }
-}
-
 function lerpPoint(a, b, t) {
   return {
     lon: lerp(a.lon, b.lon, t),
@@ -64,6 +56,7 @@ function dedupeNearPoints(points, epsilon = 1e-9) {
   for (let i = 1; i < points.length; i++) {
     const prev = out[out.length - 1]
     const cur = points[i]
+
     if (
       Math.abs(prev.lat - cur.lat) > epsilon ||
       Math.abs(prev.lon - cur.lon) > epsilon ||
@@ -78,9 +71,9 @@ function dedupeNearPoints(points, epsilon = 1e-9) {
 
 function buildRoundedPath(points, options = {}) {
   const {
-    cornerRadius = 0.01,
-    minCornerAngleDeg = 8,
-    samplesPerCorner = 12
+    cornerRadius = 0.5,
+    minCornerAngleDeg = 10,
+    samplesPerCorner = 30
   } = options
 
   if (!points?.length) return []
@@ -111,13 +104,11 @@ function buildRoundedPath(points, options = {}) {
     const incomingTowardsVertex = { x: -inDirForward.x, y: -inDirForward.y }
     const angle = angleBetweenDirs(incomingTowardsVertex, outDirForward)
 
-    // quasi rettilineo => nessun raccordo
     if (angle < minCornerAngle || Math.abs(Math.PI - angle) < 0.01) {
       out.push(curr)
       continue
     }
 
-    // distanza di trimming sui lati: solo vicino al vertice
     const trim = Math.min(cornerRadius, inLen * 0.35, outLen * 0.35)
 
     if (trim <= 0) {
@@ -137,16 +128,13 @@ function buildRoundedPath(points, options = {}) {
       ele: lerp(curr.ele || 0, next.ele || 0, trim / outLen)
     }
 
-    // preserva rettilineo fino all'entry point
     out.push(entry)
 
-    // raccordo locale centrato sul vertice
     for (let s = 1; s < samplesPerCorner; s++) {
       const t = s / samplesPerCorner
       out.push(quadraticBezier(entry, curr, exit, t))
     }
 
-    // non pushiamo curr: l'angolo viene sostituito dalla curva
     out.push(exit)
   }
 
@@ -156,9 +144,11 @@ function buildRoundedPath(points, options = {}) {
 
 function cumulativeDistances(points) {
   const acc = [0]
+
   for (let i = 1; i < points.length; i++) {
     acc.push(acc[i - 1] + distance2D(points[i - 1], points[i]))
   }
+
   return acc
 }
 
@@ -195,6 +185,54 @@ function computeHeadingRadians(fromPoint, toPoint) {
   return Math.atan2(y, x)
 }
 
+function wrapAngle(angle) {
+  while (angle > Math.PI) angle -= Math.PI * 2
+  while (angle < -Math.PI) angle += Math.PI * 2
+  return angle
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
+}
+
+function computeCurvatureFactor(points, distances, distanceProgress, sampleDistance) {
+  const totalDistance = distances[distances.length - 1] || 0
+
+  const p0 = interpolateAlongPath(
+    points,
+    distances,
+    Math.max(0, distanceProgress - sampleDistance)
+  )
+  const p1 = interpolateAlongPath(
+    points,
+    distances,
+    Math.max(0, distanceProgress - sampleDistance * 0.35)
+  )
+  const p2 = interpolateAlongPath(
+    points,
+    distances,
+    Math.min(totalDistance, distanceProgress + sampleDistance * 0.35)
+  )
+  const p3 = interpolateAlongPath(
+    points,
+    distances,
+    Math.min(totalDistance, distanceProgress + sampleDistance)
+  )
+
+  if (!p0 || !p1 || !p2 || !p3) return 0
+
+  const headingBefore = computeHeadingRadians(p0, p1)
+  const headingAfter = computeHeadingRadians(p2, p3)
+  const delta = Math.abs(wrapAngle(headingAfter - headingBefore))
+
+  return smoothstep(
+    Cesium.Math.toRadians(2),
+    Cesium.Math.toRadians(28),
+    delta
+  )
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -205,14 +243,13 @@ export default function CesiumMap({
   const viewerRef = useRef(null)
   const flightRef = useRef({
     animationId: null,
-    stopped: false
+    stopped: false,
+    speedFactor: 1
   })
 
   const smoothedPath = useMemo(() => {
     if (!trackPoints?.length) return []
 
-    // 0.01 ~ dipende dalle coordinate in gradi; qui usiamo un valore molto piccolo
-    // per arrotondare solo gli angoli senza deformare i rettilinei
     const rounded = buildRoundedPath(trackPoints, {
       cornerRadius: 0.006,
       minCornerAngleDeg: 10,
@@ -297,6 +334,7 @@ export default function CesiumMap({
 
     const state = flightRef.current
     state.stopped = false
+    state.speedFactor = 1
 
     if (state.animationId) {
       cancelAnimationFrame(state.animationId)
@@ -307,12 +345,17 @@ export default function CesiumMap({
     let lastTs = null
 
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
-    const distancePerSecond = totalDistance * 0.08 * speed
+    const baseDistancePerSecond = totalDistance * 0.04 * speed
     const tangentLookAheadDistance = totalDistance * 0.006
+    const curvatureSampleDistance = totalDistance * 0.1
+
+    const minCurveSpeedFactor = 0.5
+    const speedResponse = 1.5
+
     const cameraHeightOffset = 500
     const pitch = Cesium.Math.toRadians(-10)
 
-    console.log('🚀 START flyover rounded-corners')
+    console.log('🚀 START flyover rounded-corners + curve slowdown')
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -321,7 +364,20 @@ export default function CesiumMap({
       const dt = (ts - lastTs) / 1000
       lastTs = ts
 
-      distanceProgress += dt * distancePerSecond
+      const curvatureFactor = computeCurvatureFactor(
+        smoothedPath,
+        pathDistances,
+        distanceProgress,
+        curvatureSampleDistance
+      )
+
+      const targetSpeedFactor =
+        1 - curvatureFactor * (1 - minCurveSpeedFactor)
+
+      const t = 1 - Math.exp(-speedResponse * dt)
+      state.speedFactor = lerp(state.speedFactor, targetSpeedFactor, t)
+
+      distanceProgress += dt * baseDistancePerSecond * state.speedFactor
 
       if (distanceProgress >= totalDistance) {
         console.log('🏁 Fine animazione')
@@ -329,7 +385,12 @@ export default function CesiumMap({
         return
       }
 
-      const current = interpolateAlongPath(smoothedPath, pathDistances, distanceProgress)
+      const current = interpolateAlongPath(
+        smoothedPath,
+        pathDistances,
+        distanceProgress
+      )
+
       const ahead = interpolateAlongPath(
         smoothedPath,
         pathDistances,
