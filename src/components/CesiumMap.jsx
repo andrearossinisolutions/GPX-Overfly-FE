@@ -388,7 +388,7 @@ export default function CesiumMap({
     const speedResponse = 1.5
 
     // finestra stretta per il roll
-    const bankSampleDistance = totalDistance * 0.008
+    const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
     const rollResponse = 3.0
 
@@ -443,22 +443,24 @@ export default function CesiumMap({
         return
       }
 
+      const bankLeadDistance = totalDistance * 0.0018
+
       const signedTurn = computeLocalSignedTurn(
         smoothedPath,
         pathDistances,
-        distanceProgress,
+        Math.min(distanceProgress + bankLeadDistance, totalDistance),
         bankSampleDistance
       )
 
       // attiva il bank solo su virata locale
       const rawTurnAmount = smoothstep(
-        Cesium.Math.toRadians(3.5),
-        Cesium.Math.toRadians(14),
+        Cesium.Math.toRadians(2.8),
+        Cesium.Math.toRadians(13),
         Math.abs(signedTurn)
         )
 
       // curva più gentile: sale più lentamente all'inizio e si appiattisce meglio
-      const localTurnAmount = rawTurnAmount * rawTurnAmount
+      const localTurnAmount = rawTurnAmount * rawTurnAmount * rawTurnAmount
 
       // inverti il segno se inclina dal lato sbagliato
       const targetRoll =
@@ -466,7 +468,12 @@ export default function CesiumMap({
         localTurnAmount *
         maxRoll
 
-      const rollT = 1 - Math.exp(-rollResponse * dt)
+      const rollInResponse = 3.5
+      const rollOutResponse = 1.5
+      const activeRollResponse =
+      Math.abs(targetRoll) < Math.abs(state.roll) ? rollOutResponse : rollInResponse
+
+      const rollT = 1 - Math.exp(-activeRollResponse * dt)
       state.roll = lerp(state.roll, targetRoll, rollT)
 
       const destination = Cesium.Cartesian3.fromDegrees(
