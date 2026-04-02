@@ -278,6 +278,7 @@ export default function CesiumMap({
 }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
+  const pathEntityRef = useRef(null)
   const flightRef = useRef({
     animationId: null,
     stopped: false,
@@ -364,6 +365,9 @@ export default function CesiumMap({
         clampToGround: false
       }
     })
+
+    pathEntityRef.current = entity
+    viewer.zoomTo(entity)
 
     viewer.zoomTo(entity)
   }, [smoothedPath])
@@ -692,11 +696,40 @@ export default function CesiumMap({
 
   useEffect(() => {
     if (!stopSignal) return
+
     const state = flightRef.current
+    const viewer = viewerRef.current
+    const pathEntity = pathEntityRef.current
+
     state.stopped = true
+
     if (state.animationId) {
       cancelAnimationFrame(state.animationId)
       state.animationId = null
+    }
+
+    state.roll = 0
+    state.speedFactor = 1
+
+    if (viewer && pathEntity) {
+      const boundingSphere = new Cesium.BoundingSphere()
+
+      viewer.dataSourceDisplay.getBoundingSphere(
+        pathEntity,
+        false,
+        boundingSphere
+      )
+
+      const range = Math.max(boundingSphere.radius * 3, 1500)
+
+      viewer.camera.flyToBoundingSphere(boundingSphere, {
+        duration: 1.2,
+        offset: new Cesium.HeadingPitchRange(
+          0,
+          Cesium.Math.toRadians(-90),
+          range
+        )
+      })
     }
   }, [stopSignal])
 
