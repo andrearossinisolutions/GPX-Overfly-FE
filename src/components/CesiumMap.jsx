@@ -300,7 +300,8 @@ export default function CesiumMap({
     animationId: null,
     stopped: false,
     speedFactor: 1,
-    roll: 0
+    roll: 0,
+    transitioningToStart: false
   })
 
   const smoothedPath = useMemo(() => {
@@ -502,6 +503,14 @@ export default function CesiumMap({
     const startPoint = smoothedPath[0]
     const startAheadPoint =
       smoothedPath[Math.min(1, smoothedPath.length - 1)] || startPoint
+    
+    const introStartDestination = Cesium.Cartesian3.fromDegrees(
+      startPoint.lon,
+      startPoint.lat,
+      Math.min((startPoint.ele || 0) + introHighHeightOffset, 4000)
+    )
+
+    const introStartHeading = computeHeadingRadians(startPoint, startAheadPoint)
 
     const endPoint = smoothedPath[smoothedPath.length - 1]
     const endBeforePoint =
@@ -760,14 +769,38 @@ export default function CesiumMap({
       state.animationId = requestAnimationFrame(tick)
     }
 
+    const startFlightTick = () => {
+  if (state.stopped) return
+    state.transitioningToStart = false
     state.animationId = requestAnimationFrame(tick)
+  }
 
-    return () => {
-      if (state.animationId) {
-        cancelAnimationFrame(state.animationId)
-        state.animationId = null
-      }
+  state.transitioningToStart = true
+
+  viewer.camera.flyTo({
+    destination: introStartDestination,
+    orientation: {
+      heading: introStartHeading,
+      pitch: verticalPitch,
+      roll: 0
+    },
+    duration: 1.6,
+    easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT,
+    complete: startFlightTick,
+    cancel: () => {
+      state.transitioningToStart = false
     }
+  })
+
+  return () => {
+    state.transitioningToStart = false
+    viewer.camera.cancelFlight()
+
+    if (state.animationId) {
+      cancelAnimationFrame(state.animationId)
+      state.animationId = null
+    }
+  }
   }, [shouldPlay, smoothedPath, pathDistances])
 
   useEffect(() => {
@@ -778,6 +811,12 @@ export default function CesiumMap({
     const pathPositions = pathPositionsRef.current
 
     state.stopped = true
+
+    state.transitioningToStart = false
+
+    if (viewer) {
+      viewer.camera.cancelFlight()
+    }
 
     if (state.animationId) {
       cancelAnimationFrame(state.animationId)
