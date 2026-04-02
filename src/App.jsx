@@ -47,6 +47,10 @@ export default function App() {
     setPlayNonce((n) => n + 1)
   }
 
+  const handleReset = () => {
+    window.location.reload()
+  }
+
   const handleStop = () => {
     setStopNonce((n) => n + 1)
     setHasStarted(false)
@@ -168,6 +172,20 @@ export default function App() {
                   marginTop: 4
                 }}
               >
+                { trackName && <button
+                  onClick={handleReset}
+                  style={{
+                    padding: '12px 18px',
+                    borderRadius: 12,
+                    border: 'none',
+                    background: '#fff',
+                    color: '#0f172a',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Unload
+                </button>}
                 <button
                   onClick={handlePlay}
                   disabled={!trackPoints.length}
