@@ -323,6 +323,35 @@ function downloadRecording(chunks, filenameBase = 'gps-overfly') {
   URL.revokeObjectURL(url)
 }
 
+function getPathBBox(points) {
+  if (!points?.length) return null
+
+  const lats = points.map((p) => p.lat)
+  const lons = points.map((p) => p.lon)
+
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLon: Math.min(...lons),
+    maxLon: Math.max(...lons)
+  }
+}
+
+function bboxToString(bbox) {
+  if (!bbox) return ''
+  return `${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`
+}
+
+function normalizeReportingPointsResponse(data) {
+  if (!data) return []
+
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.features)) return data.features
+  if (Array.isArray(data)) return data
+
+  return []
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -340,6 +369,67 @@ export default function CesiumMap({
   const recordedChunksRef = useRef([])
   const recordingActiveRef = useRef(false)
   const recordingFileNameRef = useRef(recordingFileName)
+  const reportingPointEntitiesRef = useRef([])
+
+  const clearReportingPoints = () => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    for (const entity of reportingPointEntitiesRef.current) {
+      viewer.entities.remove(entity)
+    }
+
+    reportingPointEntitiesRef.current = []
+  }
+
+  const addReportingPointsToMap = (reportingPoints) => {
+    const viewer = viewerRef.current
+    if (!viewer || !Cesium) return
+
+    clearReportingPoints()
+
+    for (const rp of reportingPoints) {
+      const coords =
+        rp?.geometry?.coordinates ||
+        rp?.geometry?.coordinates?.[0] ||
+        null
+
+      const lon = Array.isArray(coords) ? coords[0] : undefined
+      const lat = Array.isArray(coords) ? coords[1] : undefined
+
+      const name =
+        rp?.name ||
+        rp?.properties?.name ||
+        rp?.properties?.title ||
+        'VFR Point'
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
+
+      const entity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat, 260),
+        point: {
+          pixelSize: 9,
+          color: Cesium.Color.YELLOW,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2
+        },
+        label: {
+          text: name,
+          font: 'bold 14px sans-serif',
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scale: 0.85
+        }
+      })
+
+      reportingPointEntitiesRef.current.push(entity)
+    }
+  }
 
   const flightRef = useRef({
     animationId: null,
@@ -369,6 +459,52 @@ export default function CesiumMap({
   useEffect(() => {
     speedRef.current = speed
   }, [speed])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !smoothedPath?.length) {
+      clearReportingPoints()
+      return
+    }
+
+    const controller = new AbortController()
+
+    const loadReportingPoints = async () => {
+      try {
+        const bbox = getPathBBox(smoothedPath)
+        const bboxParam = bboxToString(bbox)
+
+        if (!bboxParam) return
+
+        const response = await fetch(
+          `http://localhost:3001/api/reporting-points?bbox=${encodeURIComponent(bboxParam)}`,
+          { signal: controller.signal }
+        )
+
+        if (!response.ok) {
+          throw new Error(`Reporting points request failed: ${response.status}`)
+        }
+
+        const data = await response.json()
+        const reportingPoints = normalizeReportingPointsResponse(data)
+
+        console.log('🟡 reporting points:', reportingPoints.length)
+
+        addReportingPointsToMap(reportingPoints)
+      } catch (error) {
+        if (error.name === 'AbortError') return
+        console.error('❌ Failed to load reporting points:', error)
+        clearReportingPoints()
+      }
+    }
+
+    loadReportingPoints()
+
+    return () => {
+      controller.abort()
+      clearReportingPoints()
+    }
+  }, [smoothedPath])
 
   useEffect(() => {
     recordingFileNameRef.current = recordingFileName
@@ -473,6 +609,7 @@ export default function CesiumMap({
 
     viewer.entities.removeAll()
     pathPositionsRef.current = null
+    reportingPointEntitiesRef.current = []
 
     if (!smoothedPath?.length) return
 
