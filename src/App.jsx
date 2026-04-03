@@ -94,8 +94,8 @@ export default function App() {
             position: 'fixed',
             inset: 0,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            alignItems: !trackName ? 'center' : 'end',
+            justifyContent: !trackName ? 'center' : 'start',
             pointerEvents: 'none',
             zIndex: 20
           }}
@@ -108,7 +108,7 @@ export default function App() {
               pointerEvents: 'auto'
             }}
           >
-            <div style={{ marginBottom: 18 }}>
+            { !trackName && <div style={{ marginBottom: 18 }}>
               <div
                 style={{
                   fontSize: 28,
@@ -121,7 +121,7 @@ export default function App() {
               <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
                 Carica una traccia GPX e avvia il flyover.
               </div>
-            </div>
+            </div> }
 
             <div
               style={{
@@ -177,7 +177,7 @@ export default function App() {
                 </div>
               )}
 
-              <div
+              { trackName && <div
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
@@ -213,22 +213,20 @@ export default function App() {
                     gap: 12
                   }}
                 >
-                  {trackName && (
-                    <button
-                      onClick={handleReset}
-                      style={{
-                        padding: '12px 18px',
-                        borderRadius: 12,
-                        border: 'none',
-                        background: '#fff',
-                        color: '#0f172a',
-                        fontWeight: 700,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Unload
-                    </button>
-                  )}
+                  <button
+                    onClick={handleReset}
+                    style={{
+                      padding: '12px 18px',
+                      borderRadius: 12,
+                      border: 'none',
+                      background: '#fff',
+                      color: '#0f172a',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Unload
+                  </button>
 
                   <button
                     onClick={handlePlay}
@@ -246,7 +244,7 @@ export default function App() {
                     TAKEOFF
                   </button>
                 </div>
-              </div>
+              </div> }
             </div>
           </div>
         </div>
