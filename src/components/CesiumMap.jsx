@@ -50,7 +50,10 @@ function quadraticBezier(p0, p1, p2, t) {
   return {
     lon: u * u * p0.lon + 2 * u * t * p1.lon + t * t * p2.lon,
     lat: u * u * p0.lat + 2 * u * t * p1.lat + t * t * p2.lat,
-    ele: u * u * (p0.ele || 0) + 2 * u * t * (p1.ele || 0) + t * t * (p2.ele || 0)
+    ele:
+      u * u * (p0.ele || 0) +
+      2 * u * t * (p1.ele || 0) +
+      t * t * (p2.ele || 0)
   }
 }
 
@@ -352,6 +355,152 @@ function normalizeReportingPointsResponse(data) {
   return []
 }
 
+function normalizeAirspacesResponse(data) {
+  if (!data) return []
+
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.features)) return data.features
+  if (Array.isArray(data)) return data
+
+  return []
+}
+
+function polygonCoordinatesToDegreesArray(coords) {
+  if (!Array.isArray(coords) || !coords.length) return []
+
+  let ring = null
+
+  // Polygon GeoJSON => [ [ [lon,lat], ... ] ]
+  if (
+    Array.isArray(coords[0]) &&
+    Array.isArray(coords[0][0]) &&
+    typeof coords[0][0][0] === 'number'
+  ) {
+    ring = coords[0]
+  }
+  // Ring diretto => [ [lon,lat], ... ]
+  else if (
+    Array.isArray(coords[0]) &&
+    typeof coords[0][0] === 'number'
+  ) {
+    ring = coords
+  }
+  // MultiPolygon => [ [ [ [lon,lat], ... ] ] ]
+  else if (
+    Array.isArray(coords[0]) &&
+    Array.isArray(coords[0][0]) &&
+    Array.isArray(coords[0][0][0])
+  ) {
+    ring = coords[0][0]
+  }
+
+  if (!ring) return []
+
+  const out = []
+
+  for (const p of ring) {
+    if (!Array.isArray(p) || p.length < 2) continue
+    const lon = Number(p[0])
+    const lat = Number(p[1])
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+    out.push(lon, lat)
+  }
+
+  return out
+}
+
+function toMeters(value, unit) {
+  if (!Number.isFinite(value)) return null
+
+  const normalizedUnit = String(unit || '').toUpperCase()
+
+  if (normalizedUnit === 'FT' || normalizedUnit === 'FEET') {
+    return value * 0.3048
+  }
+
+  if (
+    normalizedUnit === 'M' ||
+    normalizedUnit === 'METER' ||
+    normalizedUnit === 'METERS'
+  ) {
+    return value
+  }
+
+  if (normalizedUnit === 'FL') {
+    return value * 100 * 0.3048
+  }
+
+  return value
+}
+
+function getAirspaceHeightValue(limit) {
+  if (!limit) return null
+
+  if (typeof limit === 'number') return limit
+
+  if (typeof limit?.value === 'number') {
+    return toMeters(limit.value, limit.unit)
+  }
+
+  if (typeof limit?.altitude?.value === 'number') {
+    return toMeters(limit.altitude.value, limit.altitude.unit || limit.unit)
+  }
+
+  if (typeof limit?.height?.value === 'number') {
+    return toMeters(limit.height.value, limit.height.unit || limit.unit)
+  }
+
+  if (typeof limit?.meter === 'number') return limit.meter
+  if (typeof limit?.meters === 'number') return limit.meters
+
+  return null
+}
+
+function getAirspaceHeights(airspace) {
+  const lower =
+    airspace?.lowerLimit ||
+    airspace?.lower ||
+    airspace?.properties?.lowerLimit ||
+    airspace?.properties?.lower
+
+  const upper =
+    airspace?.upperLimit ||
+    airspace?.upper ||
+    airspace?.properties?.upperLimit ||
+    airspace?.properties?.upper
+
+  const lowerValue = getAirspaceHeightValue(lower)
+  const upperValue = getAirspaceHeightValue(upper)
+
+  return {
+    height: Number.isFinite(lowerValue) ? Math.max(lowerValue, 0) : 0,
+    extrudedHeight: Number.isFinite(upperValue)
+      ? Math.max(upperValue, 200)
+      : 1200
+  }
+}
+
+function isCtrAirspace(airspace) {
+  const values = [
+    airspace?.type,
+    airspace?.category,
+    airspace?.name,
+    airspace?.properties?.type,
+    airspace?.properties?.category,
+    airspace?.properties?.class,
+    airspace?.properties?.name
+  ]
+    .filter(Boolean)
+    .map((v) => String(v).toUpperCase())
+
+  return values.some(
+    (v) =>
+      v.includes('CTR') ||
+      v.includes('CONTROL ZONE') ||
+      v.includes('CONTROLZONE')
+  )
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -370,6 +519,7 @@ export default function CesiumMap({
   const recordingActiveRef = useRef(false)
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
+  const airspaceEntitiesRef = useRef([])
 
   const clearReportingPoints = () => {
     const viewer = viewerRef.current
@@ -380,6 +530,17 @@ export default function CesiumMap({
     }
 
     reportingPointEntitiesRef.current = []
+  }
+
+  const clearAirspaces = () => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    for (const entity of airspaceEntitiesRef.current) {
+      viewer.entities.remove(entity)
+    }
+
+    airspaceEntitiesRef.current = []
   }
 
   const addReportingPointsToMap = (reportingPoints) => {
@@ -394,8 +555,8 @@ export default function CesiumMap({
         rp?.geometry?.coordinates?.[0] ||
         null
 
-      const lon = Array.isArray(coords) ? coords[0] : undefined
-      const lat = Array.isArray(coords) ? coords[1] : undefined
+      const lon = Array.isArray(coords) ? Number(coords[0]) : undefined
+      const lat = Array.isArray(coords) ? Number(coords[1]) : undefined
 
       const name =
         rp?.name ||
@@ -429,6 +590,74 @@ export default function CesiumMap({
 
       reportingPointEntitiesRef.current.push(entity)
     }
+  }
+
+  const addAirspacesToMap = (airspaces) => {
+    const viewer = viewerRef.current
+    if (!viewer || !Cesium) return
+
+    clearAirspaces()
+
+    let rendered = 0
+
+    const ctrFillColor = Cesium.Color.fromCssColorString('#4DA3FF').withAlpha(0.18)
+    const ctrLineColor = Cesium.Color.fromCssColorString('#4DA3FF')
+
+    for (const airspace of airspaces) {
+      const coords = airspace?.geometry?.coordinates
+      const degreesArray = polygonCoordinatesToDegreesArray(coords)
+
+      const typeInfo = {
+        name: airspace?.name || airspace?.properties?.name,
+        type: airspace?.type || airspace?.properties?.type,
+        category: airspace?.category || airspace?.properties?.category,
+        class: airspace?.properties?.class
+      }
+
+      if (degreesArray.length < 6) {
+        console.log('⚠️ airspace skip geometry', typeInfo, coords)
+        continue
+      }
+
+      const ctr = isCtrAirspace(airspace)
+      console.log('🧪 airspace parsed', {
+        ctr,
+        ...typeInfo,
+        points: degreesArray.length / 2
+      })
+
+      if (!ctr) continue
+
+      const { height, extrudedHeight } = getAirspaceHeights(airspace)
+      const baseHeight = Math.max(0, height)
+      const topHeight = Math.max(baseHeight + 200, extrudedHeight)
+
+      const polygonEntity = viewer.entities.add({
+        polygon: {
+          hierarchy: Cesium.Cartesian3.fromDegreesArray(degreesArray),
+          height: baseHeight,
+          extrudedHeight: topHeight,
+          material: ctrFillColor,
+          outline: true,
+          outlineColor: ctrLineColor,
+          perPositionHeight: false
+        }
+      })
+
+      const groundOutlineEntity = viewer.entities.add({
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArray(degreesArray),
+          width: 3,
+          material: ctrLineColor,
+          clampToGround: true
+        }
+      })
+
+      airspaceEntitiesRef.current.push(polygonEntity, groundOutlineEntity)
+      rendered++
+    }
+
+    console.log('✅ CTR rendered:', rendered)
   }
 
   const flightRef = useRef({
@@ -503,6 +732,52 @@ export default function CesiumMap({
     return () => {
       controller.abort()
       clearReportingPoints()
+    }
+  }, [smoothedPath])
+
+  useEffect(() => {
+    const viewer = viewerRef.current
+    if (!viewer || !smoothedPath?.length) {
+      clearAirspaces()
+      return
+    }
+
+    const controller = new AbortController()
+
+    const loadAirspaces = async () => {
+      try {
+        const bbox = getPathBBox(smoothedPath)
+        const bboxParam = bboxToString(bbox)
+
+        if (!bboxParam) return
+
+        const response = await fetch(
+          `http://localhost:3001/api/airspaces?bbox=${encodeURIComponent(bboxParam)}`,
+          { signal: controller.signal }
+        )
+
+        if (!response.ok) {
+          throw new Error(`Airspaces request failed: ${response.status}`)
+        }
+
+        const data = await response.json()
+        const airspaces = normalizeAirspacesResponse(data)
+
+        console.log('🟥 airspaces:', airspaces.length)
+
+        addAirspacesToMap(airspaces)
+      } catch (error) {
+        if (error.name === 'AbortError') return
+        console.error('❌ Failed to load airspaces:', error)
+        clearAirspaces()
+      }
+    }
+
+    loadAirspaces()
+
+    return () => {
+      controller.abort()
+      clearAirspaces()
     }
   }, [smoothedPath])
 
@@ -610,6 +885,7 @@ export default function CesiumMap({
     viewer.entities.removeAll()
     pathPositionsRef.current = null
     reportingPointEntitiesRef.current = []
+    airspaceEntitiesRef.current = []
 
     if (!smoothedPath?.length) return
 
@@ -764,7 +1040,9 @@ export default function CesiumMap({
     const endBeforePoint =
       smoothedPath[Math.max(smoothedPath.length - 2, 0)] || endPoint
 
-    console.log('🚀 START flyover intro-drop + intro-pull-up + intro-settle + cruise + arrival-level + outro')
+    console.log(
+      '🚀 START flyover intro-drop + intro-pull-up + intro-settle + cruise + arrival-level + outro'
+    )
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -785,7 +1063,11 @@ export default function CesiumMap({
 
         current = startPoint
         ahead = startAheadPoint
-        dynamicHeightOffset = lerp(introHighHeightOffset, introGroundOffset, t)
+        dynamicHeightOffset = lerp(
+          introHighHeightOffset,
+          introGroundOffset,
+          t
+        )
         dynamicPitch = lerp(verticalPitch, groundPitch, t)
         dynamicRoll = 0
 
@@ -796,23 +1078,26 @@ export default function CesiumMap({
       } else if (phase === 'intro-pull-up') {
         const t = easeInOut(phaseElapsed / introPullUpDuration)
 
-        current = interpolateAlongPath(
-          smoothedPath,
-          pathDistances,
-          distanceProgress
-        ) || startPoint
+        current =
+          interpolateAlongPath(
+            smoothedPath,
+            pathDistances,
+            distanceProgress
+          ) || startPoint
 
-        ahead = interpolateAlongPath(
-          smoothedPath,
-          pathDistances,
-          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
-        ) || startAheadPoint
+        ahead =
+          interpolateAlongPath(
+            smoothedPath,
+            pathDistances,
+            Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+          ) || startAheadPoint
 
         dynamicHeightOffset = lerp(introGroundOffset, cruiseHeightOffset, t)
         dynamicPitch = lerp(groundPitch, climbPitch, t)
         dynamicRoll = 0
 
-        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * 0.35
+        distanceProgress +=
+          dt * baseDistancePerSecondBase * speedRef.current * 0.35
 
         if (t >= 1) {
           phase = 'intro-settle'
@@ -821,23 +1106,26 @@ export default function CesiumMap({
       } else if (phase === 'intro-settle') {
         const t = easeInOut(phaseElapsed / introSettleDuration)
 
-        current = interpolateAlongPath(
-          smoothedPath,
-          pathDistances,
-          distanceProgress
-        ) || startPoint
+        current =
+          interpolateAlongPath(
+            smoothedPath,
+            pathDistances,
+            distanceProgress
+          ) || startPoint
 
-        ahead = interpolateAlongPath(
-          smoothedPath,
-          pathDistances,
-          Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
-        ) || startAheadPoint
+        ahead =
+          interpolateAlongPath(
+            smoothedPath,
+            pathDistances,
+            Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
+          ) || startAheadPoint
 
         dynamicHeightOffset = cruiseHeightOffset
         dynamicPitch = lerp(climbPitch, cruisePitch, t)
         dynamicRoll = 0
 
-        distanceProgress += dt * baseDistancePerSecondBase * speedRef.current * 0.7
+        distanceProgress +=
+          dt * baseDistancePerSecondBase * speedRef.current * 0.7
 
         if (t >= 1) {
           phase = 'cruise'
