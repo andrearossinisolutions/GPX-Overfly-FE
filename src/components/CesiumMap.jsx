@@ -529,7 +529,7 @@ function createAirspaceStyleMap() {
       label: 'ATZ',
       enabled: true,
       fillColorCss: '#4DA3FF',
-      fillAlpha: 0.10,
+      fillAlpha: 0.1,
       lineColorCss: '#4DA3FF',
       groundLineColorCss: '#4DA3FF',
       groundDashed: true,
@@ -541,7 +541,7 @@ function createAirspaceStyleMap() {
       label: 'MATZ',
       enabled: true,
       fillColorCss: '#4DA3FF',
-      fillAlpha: 0.10,
+      fillAlpha: 0.1,
       lineColorCss: '#4DA3FF',
       groundLineColorCss: '#4DA3FF',
       groundDashed: true,
@@ -590,7 +590,8 @@ export default function CesiumMap({
   speed,
   onPositionChange,
   recordEnabled = false,
-  recordingFileName = 'gps-overfly'
+  recordingFileName = 'gps-overfly',
+  interpretLastAsAlternate = false
 }) {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
@@ -602,6 +603,23 @@ export default function CesiumMap({
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
+
+  const renderedTrackPoints = useMemo(() => {
+    return trackPoints || []
+  }, [trackPoints])
+
+  const navigableTrackPoints = useMemo(() => {
+    if (!trackPoints?.length) return []
+    if (!interpretLastAsAlternate) return trackPoints
+    if (trackPoints.length <= 1) return trackPoints
+    return trackPoints.slice(0, -1)
+  }, [trackPoints, interpretLastAsAlternate])
+
+  const alternatePoint = useMemo(() => {
+    if (!interpretLastAsAlternate) return null
+    if (!trackPoints?.length || trackPoints.length <= 1) return null
+    return trackPoints[trackPoints.length - 1]
+  }, [trackPoints, interpretLastAsAlternate])
 
   const clearReportingPoints = () => {
     const viewer = viewerRef.current
@@ -753,9 +771,9 @@ export default function CesiumMap({
   })
 
   const smoothedPath = useMemo(() => {
-    if (!trackPoints?.length) return []
+    if (!navigableTrackPoints?.length) return []
 
-    const rounded = buildRoundedPath(trackPoints, {
+    const rounded = buildRoundedPath(navigableTrackPoints, {
       cornerRadius: 0.006,
       minCornerAngleDeg: 10,
       samplesPerCorner: 10
@@ -763,7 +781,7 @@ export default function CesiumMap({
 
     console.log('🧩 rounded path points:', rounded.length)
     return rounded
-  }, [trackPoints])
+  }, [navigableTrackPoints])
 
   const pathDistances = useMemo(() => {
     return cumulativeDistances(smoothedPath)
@@ -775,7 +793,7 @@ export default function CesiumMap({
 
   useEffect(() => {
     const viewer = viewerRef.current
-    if (!viewer || !smoothedPath?.length) {
+    if (!viewer || !renderedTrackPoints?.length) {
       clearReportingPoints()
       return
     }
@@ -784,7 +802,7 @@ export default function CesiumMap({
 
     const loadReportingPoints = async () => {
       try {
-        const bbox = getPathBBox(smoothedPath)
+        const bbox = getPathBBox(renderedTrackPoints)
         const bboxParam = bboxToString(bbox)
 
         if (!bboxParam) return
@@ -817,11 +835,11 @@ export default function CesiumMap({
       controller.abort()
       clearReportingPoints()
     }
-  }, [smoothedPath])
+  }, [renderedTrackPoints, interpretLastAsAlternate])
 
   useEffect(() => {
     const viewer = viewerRef.current
-    if (!viewer || !smoothedPath?.length) {
+    if (!viewer || !renderedTrackPoints?.length) {
       clearAirspaces()
       return
     }
@@ -830,7 +848,7 @@ export default function CesiumMap({
 
     const loadAirspaces = async () => {
       try {
-        const bbox = getPathBBox(smoothedPath)
+        const bbox = getPathBBox(renderedTrackPoints)
         const bboxParam = bboxToString(bbox)
 
         if (!bboxParam) return
@@ -863,7 +881,7 @@ export default function CesiumMap({
       controller.abort()
       clearAirspaces()
     }
-  }, [smoothedPath])
+  }, [renderedTrackPoints, interpretLastAsAlternate])
 
   useEffect(() => {
     recordingFileNameRef.current = recordingFileName
@@ -975,7 +993,7 @@ export default function CesiumMap({
 
     const pathHeightOffset = 200
 
-    const positions = smoothedPath.map((p, i) => {
+    const mainPositions = smoothedPath.map((p, i) => {
       if (i < 5) console.log('📍 path sample', p)
       return Cesium.Cartesian3.fromDegrees(
         p.lon,
@@ -984,16 +1002,53 @@ export default function CesiumMap({
       )
     })
 
-    pathPositionsRef.current = positions
+    let allVisiblePositions = [...mainPositions]
 
     viewer.entities.add({
       polyline: {
-        positions,
+        positions: mainPositions,
         width: 4,
         material: Cesium.Color.CYAN,
         clampToGround: false
       }
     })
+
+    if (
+      interpretLastAsAlternate &&
+      alternatePoint &&
+      navigableTrackPoints.length > 0
+    ) {
+      const plannedLandingPoint =
+        navigableTrackPoints[navigableTrackPoints.length - 1]
+
+      const alternateCartesian = Cesium.Cartesian3.fromDegrees(
+        alternatePoint.lon,
+        alternatePoint.lat,
+        (alternatePoint.ele || 0) + pathHeightOffset
+      )
+
+      const alternatePositions = [
+        Cesium.Cartesian3.fromDegrees(
+          plannedLandingPoint.lon,
+          plannedLandingPoint.lat,
+          (plannedLandingPoint.ele || 0) + pathHeightOffset
+        ),
+        alternateCartesian
+      ]
+
+      viewer.entities.add({
+        polyline: {
+          positions: alternatePositions,
+          width: 4,
+          material: Cesium.Color.ORANGE,
+          clampToGround: false
+        }
+      })
+
+      allVisiblePositions = [...allVisiblePositions, alternateCartesian]
+    }
+
+    pathPositionsRef.current = allVisiblePositions
 
     const markerHeightOffset = pathHeightOffset + 20
 
@@ -1050,8 +1105,35 @@ export default function CesiumMap({
       }
     })
 
-    flyToPathTopDown(viewer, positions)
-  }, [smoothedPath])
+    if (interpretLastAsAlternate && alternatePoint) {
+      viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(
+          alternatePoint.lon,
+          alternatePoint.lat,
+          (alternatePoint.ele || 0) + markerHeightOffset
+        ),
+        point: {
+          pixelSize: 12,
+          color: Cesium.Color.ORANGE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2
+        },
+        label: {
+          text: 'Alternate',
+          font: 'bold 18px sans-serif',
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -18),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY
+        }
+      })
+    }
+
+    flyToPathTopDown(viewer, allVisiblePositions)
+  }, [smoothedPath, interpretLastAsAlternate, alternatePoint, navigableTrackPoints])
 
   useEffect(() => {
     const viewer = viewerRef.current
@@ -1440,7 +1522,13 @@ export default function CesiumMap({
         state.animationId = null
       }
     }
-  }, [shouldPlay, smoothedPath, pathDistances, recordEnabled, onPositionChange])
+  }, [
+    shouldPlay,
+    smoothedPath,
+    pathDistances,
+    recordEnabled,
+    onPositionChange
+  ])
 
   useEffect(() => {
     if (!stopSignal) return

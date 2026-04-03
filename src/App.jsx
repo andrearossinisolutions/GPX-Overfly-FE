@@ -14,6 +14,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [currentPoint, setCurrentPoint] = useState(null)
   const [recordEnabled, setRecordEnabled] = useState(false)
+  const [interpretLastAsAlternate, setInterpretLastAsAlternate] = useState(false)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
 
@@ -80,6 +81,7 @@ export default function App() {
         onPositionChange={setCurrentPoint}
         recordEnabled={recordEnabled}
         recordingFileName={trackName ? trackName.replace(/\.gpx$/i, '-recording.gpx') : 'recording.gpx'}
+        interpretLastAsAlternate={interpretLastAsAlternate}
       />
 
       <MiniMap2D
@@ -186,6 +188,26 @@ export default function App() {
                   marginTop: 4
                 }}
               >
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 14,
+                    opacity: 0.9,
+                    pointerEvents: trackName ? 'auto' : 'none'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={interpretLastAsAlternate}
+                    onChange={(e) => setInterpretLastAsAlternate(e.target.checked)}
+                    disabled={!trackName}
+                    style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
+                  />
+                  Last point is alternate
+                </label>
+                
                 <label
                   style={{
                     display: 'flex',
