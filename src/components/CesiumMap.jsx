@@ -7,6 +7,7 @@ const FEET_TO_METERS = 0.3048
 const CAMERA_ABOVE_TRACK_FEET = 500
 const CAMERA_ABOVE_TRACK_METERS = CAMERA_ABOVE_TRACK_FEET * FEET_TO_METERS
 const PATH_DISPLAY_OFFSET_METERS = 8
+const MIN_TRACK_CLEARANCE_METERS = 50
 
 const PROFILE_START_GROUND_HOLD = 0.015
 const PROFILE_CLIMB_END = 0.10
@@ -498,8 +499,10 @@ function getTrackAltitudeAtProgress(
     routeDeclaredAltitudeMeters
   )
 
-  if (totalDistance <= 0) return ground
-  if (cruise <= ground) return cruise
+  const safeGround = ground + MIN_TRACK_CLEARANCE_METERS
+
+  if (totalDistance <= 0) return safeGround
+  if (cruise <= safeGround) return safeGround
 
   const progress = clamp(distanceProgress / totalDistance, 0, 1)
 
@@ -515,7 +518,8 @@ function getTrackAltitudeAtProgress(
     altitudeFactor = 1 - smoothstep(PROFILE_DESCENT_START, 1, progress)
   }
 
-  return lerp(ground, cruise, clamp(altitudeFactor, 0, 1))
+  const altitude = lerp(safeGround, cruise, clamp(altitudeFactor, 0, 1))
+  return Math.max(altitude, safeGround)
 }
 
 function flyToPathTopDown(viewer, positions) {
@@ -1278,12 +1282,15 @@ export default function CesiumMap({
           plannedLandingPoint.lat,
           (plannedLandingPoint.groundAltitudeMeters ||
             plannedLandingPoint.ele ||
-            0) + PATH_DISPLAY_OFFSET_METERS
+            0) +
+            MIN_TRACK_CLEARANCE_METERS +
+            PATH_DISPLAY_OFFSET_METERS
         ),
         Cesium.Cartesian3.fromDegrees(
           alternatePoint.lon,
           alternatePoint.lat,
           (alternatePoint.groundAltitudeMeters || alternatePoint.ele || 0) +
+            MIN_TRACK_CLEARANCE_METERS +
             PATH_DISPLAY_OFFSET_METERS
         )
       ]
@@ -1302,7 +1309,7 @@ export default function CesiumMap({
 
     pathPositionsRef.current = allVisiblePositions
 
-    const markerHeightOffset = 20
+    const markerHeightOffset = 20 + MIN_TRACK_CLEARANCE_METERS
 
     const start = smoothedPath[0]
     const end = smoothedPath[smoothedPath.length - 1]
