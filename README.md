@@ -1,4 +1,4 @@
-# GPX Overlay Frontend
+# GPX Overfly Frontend
 
 Frontend React + Vite per visualizzare una traccia GPX come flyover 3D interattivo su mappa Cesium.
 
