@@ -532,6 +532,15 @@ function buildWaypointLabel(point) {
   return parts.join(' · ')
 }
 
+function buildEndpointLabel(baseLabel, point) {
+  const extras = []
+
+  if (point?.sym) extras.push(point.sym)
+  if (point?.name) extras.push(point.name)
+
+  return extras.length ? `${baseLabel}\n${extras.join('\n')}` : baseLabel
+}
+
 function isIntermediateWaypoint(point, index, totalPoints, interpretLastAsAlternate) {
   if (!point) return false
   if (!point.name && !point.sym) return false
@@ -1406,6 +1415,8 @@ export default function CesiumMap({
 
     const start = smoothedPath[0]
     const end = smoothedPath[smoothedPath.length - 1]
+    const startRawPoint = navigableTrackPoints[0]
+    const endRawPoint = navigableTrackPoints[navigableTrackPoints.length - 1]
     const sameStartAndEnd = arePointsCoincident(start, end)
 
     if (sameStartAndEnd) {
@@ -1422,7 +1433,7 @@ export default function CesiumMap({
           outlineWidth: 2
         },
         label: {
-          text: 'Takeoff & Landing',
+          text: buildEndpointLabel('Takeoff & Landing', startRawPoint),
           font: 'bold 18px sans-serif',
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           fillColor: Cesium.Color.WHITE,
@@ -1447,7 +1458,7 @@ export default function CesiumMap({
           outlineWidth: 2
         },
         label: {
-          text: 'Takeoff',
+          text: buildEndpointLabel('Takeoff', startRawPoint),
           font: 'bold 18px sans-serif',
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           fillColor: Cesium.Color.WHITE,
@@ -1472,7 +1483,7 @@ export default function CesiumMap({
           outlineWidth: 2
         },
         label: {
-          text: 'Landing',
+          text: buildEndpointLabel('Landing', endRawPoint),
           font: 'bold 18px sans-serif',
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           fillColor: Cesium.Color.WHITE,
@@ -1500,7 +1511,7 @@ export default function CesiumMap({
           outlineWidth: 2
         },
         label: {
-          text: 'Alternate',
+          text: buildEndpointLabel('Alternate', alternatePoint),
           font: 'bold 18px sans-serif',
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           fillColor: Cesium.Color.WHITE,
