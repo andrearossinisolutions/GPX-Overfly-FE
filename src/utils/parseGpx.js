@@ -31,6 +31,10 @@ function readName(pointEl) {
   return readTextContent(pointEl, 'name')
 }
 
+function readSym(pointEl) {
+  return readTextContent(pointEl, 'sym')
+}
+
 function readSkdLevel(pointEl) {
   const extensionsEl = firstDirectChild(pointEl, 'extensions')
   if (!extensionsEl) return null
@@ -69,13 +73,15 @@ function parsePoint(pointEl, index, sourceType) {
 
   const ele = readEle(pointEl)
   const name = readName(pointEl)
+  const sym = readSym(pointEl)
   const skdLevel = readSkdLevel(pointEl)
 
   const point = {
     lat,
     lon,
     ele,
-    name: name || undefined
+    name: name || undefined,
+    sym: sym || undefined
   }
 
   if (skdLevel) {
@@ -91,6 +97,7 @@ function parsePoint(pointEl, index, sourceType) {
     lon,
     ele,
     name,
+    sym,
     levelAFeet: point.levelAFeet,
     skdLevel: point.skdLevel
   })
@@ -160,6 +167,13 @@ export function parseGpxText(gpxText) {
     })
   } else {
     console.warn('⚠️ Nessun <skd:level type="A" ...> trovato nei punti')
+  }
+
+  const namedOrSymbolPoints = points.filter((p) => p.name || p.sym)
+  console.log('📌 Punti con name/sym:', namedOrSymbolPoints.length)
+
+  if (namedOrSymbolPoints.length) {
+    console.log('📌 Sample point con label:', namedOrSymbolPoints[0])
   }
 
   return points

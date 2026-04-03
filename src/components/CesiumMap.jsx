@@ -116,6 +116,7 @@ function enrichPointWithAltitude(point) {
 
   console.log('🧪 altitude parse point:', {
     name: point?.name,
+    sym: point?.sym,
     lat: point?.lat,
     lon: point?.lon,
     ele: point?.ele,
@@ -522,6 +523,28 @@ function getTrackAltitudeAtProgress(
   return Math.max(altitude, safeGround)
 }
 
+function buildWaypointLabel(point) {
+  const parts = []
+
+  if (point?.sym) parts.push(point.sym)
+  if (point?.name) parts.push(point.name)
+
+  return parts.join(' · ')
+}
+
+function isIntermediateWaypoint(point, index, totalPoints, interpretLastAsAlternate) {
+  if (!point) return false
+  if (!point.name && !point.sym) return false
+  if (index === 0) return false
+
+  const landingIndex = totalPoints - 1
+  if (index === landingIndex) return false
+
+  if (interpretLastAsAlternate && index === totalPoints - 1) return false
+
+  return true
+}
+
 function flyToPathTopDown(viewer, positions) {
   if (!viewer || !positions?.length || !Cesium) return
 
@@ -858,6 +881,7 @@ export default function CesiumMap({
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
+  const routeWaypointEntitiesRef = useRef([])
 
   const renderedTrackPoints = useMemo(() => {
     return (trackPoints || []).map(enrichPointWithAltitude)
@@ -908,6 +932,17 @@ export default function CesiumMap({
     }
 
     airspaceEntitiesRef.current = []
+  }
+
+  const clearRouteWaypoints = () => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+
+    for (const entity of routeWaypointEntitiesRef.current) {
+      viewer.entities.remove(entity)
+    }
+
+    routeWaypointEntitiesRef.current = []
   }
 
   const addReportingPointsToMap = (reportingPoints) => {
@@ -1009,6 +1044,63 @@ export default function CesiumMap({
     }
 
     console.log('✅ Airspaces rendered:', rendered)
+  }
+
+  const addRouteWaypointsToMap = () => {
+    const viewer = viewerRef.current
+    if (!viewer || !Cesium) return
+
+    clearRouteWaypoints()
+
+    const totalPoints = renderedTrackPoints.length
+
+    renderedTrackPoints.forEach((point, index) => {
+      if (
+        !isIntermediateWaypoint(
+          point,
+          index,
+          totalPoints,
+          interpretLastAsAlternate
+        )
+      ) {
+        return
+      }
+
+      const labelText = buildWaypointLabel(point)
+      if (!labelText) return
+
+      const entity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(
+          point.lon,
+          point.lat,
+          (point.groundAltitudeMeters || point.ele || 0) +
+            MIN_TRACK_CLEARANCE_METERS +
+            24
+        ),
+        point: {
+          pixelSize: 10,
+          color: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2
+        },
+        label: {
+          text: labelText,
+          font: 'bold 15px sans-serif',
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -18),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scale: 0.9
+        }
+      })
+
+      routeWaypointEntitiesRef.current.push(entity)
+    })
+
+    console.log('📌 Route waypoints rendered:', routeWaypointEntitiesRef.current.length)
   }
 
   const flightRef = useRef({
@@ -1224,6 +1316,7 @@ export default function CesiumMap({
     pathPositionsRef.current = null
     reportingPointEntitiesRef.current = []
     airspaceEntitiesRef.current = []
+    routeWaypointEntitiesRef.current = []
 
     if (!smoothedPath?.length) return
 
@@ -1420,6 +1513,7 @@ export default function CesiumMap({
       })
     }
 
+    addRouteWaypointsToMap()
     flyToPathTopDown(viewer, allVisiblePositions)
   }, [
     smoothedPath,
@@ -1427,7 +1521,8 @@ export default function CesiumMap({
     interpretLastAsAlternate,
     alternatePoint,
     navigableTrackPoints,
-    routeDeclaredAltitudeMeters
+    routeDeclaredAltitudeMeters,
+    renderedTrackPoints
   ])
 
   useEffect(() => {
