@@ -3,6 +3,15 @@ import { initCesium } from '../cesiumInit'
 
 let Cesium = null
 
+const FEET_TO_METERS = 0.3048
+const CAMERA_ABOVE_TRACK_FEET = 500
+const CAMERA_ABOVE_TRACK_METERS = CAMERA_ABOVE_TRACK_FEET * FEET_TO_METERS
+const PATH_DISPLAY_OFFSET_METERS = 8
+
+const PROFILE_START_GROUND_HOLD = 0.015
+const PROFILE_CLIMB_END = 0.10
+const PROFILE_DESCENT_START = 0.90
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
@@ -14,6 +23,16 @@ function lerp(a, b, t) {
 function easeInOut(t) {
   const x = clamp(t, 0, 1)
   return x * x * (3 - 2 * x)
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
+}
+
+function feetToMeters(feet) {
+  if (!Number.isFinite(feet)) return null
+  return feet * FEET_TO_METERS
 }
 
 function distance2D(a, b) {
@@ -37,24 +56,158 @@ function angleBetweenDirs(inDir, outDir) {
   return Math.acos(d)
 }
 
+function pickDeclaredAltitudeFeet(point) {
+  if (!point) return null
+
+  const directCandidates = [
+    point.levelAFeet,
+    point.altitudeFeet,
+    point.plannedAltitudeFeet,
+    point.targetAltitudeFeet,
+    point.flightAltitudeFeet,
+    point.navAltitudeFeet,
+    point.cruiseAltitudeFeet
+  ]
+
+  for (const candidate of directCandidates) {
+    if (Number.isFinite(candidate)) return Number(candidate)
+  }
+
+  const nestedLevelCandidates = [
+    point.level,
+    point.skdLevel,
+    point.extensions?.level,
+    point.extensions?.skdLevel,
+    point.extensions?.skd?.level,
+    point.extensions?.['skd:level']
+  ]
+
+  for (const candidate of nestedLevelCandidates) {
+    if (!candidate) continue
+
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        if (
+          String(item?.type || '').toUpperCase() === 'A' &&
+          Number.isFinite(Number(item?.value))
+        ) {
+          return Number(item.value)
+        }
+      }
+      continue
+    }
+
+    if (
+      String(candidate?.type || '').toUpperCase() === 'A' &&
+      Number.isFinite(Number(candidate?.value))
+    ) {
+      return Number(candidate.value)
+    }
+  }
+
+  return null
+}
+
+function enrichPointWithAltitude(point) {
+  const declaredAltitudeFeet = pickDeclaredAltitudeFeet(point)
+  const declaredAltitudeMeters = feetToMeters(declaredAltitudeFeet)
+  const groundAltitudeMeters = Number.isFinite(point?.ele) ? Number(point.ele) : 0
+
+  console.log('🧪 altitude parse point:', {
+    name: point?.name,
+    lat: point?.lat,
+    lon: point?.lon,
+    ele: point?.ele,
+    levelAFeet: point?.levelAFeet,
+    skdLevel: point?.skdLevel,
+    extensions: point?.extensions,
+    declaredAltitudeFeet,
+    declaredAltitudeMeters
+  })
+
+  return {
+    ...point,
+    declaredAltitudeFeet,
+    declaredAltitudeMeters,
+    groundAltitudeMeters
+  }
+}
+
 function lerpPoint(a, b, t) {
   return {
+    ...a,
     lon: lerp(a.lon, b.lon, t),
     lat: lerp(a.lat, b.lat, t),
-    ele: lerp(a.ele || 0, b.ele || 0, t)
+    ele: lerp(a.ele || 0, b.ele || 0, t),
+    groundAltitudeMeters: lerp(
+      a.groundAltitudeMeters || 0,
+      b.groundAltitudeMeters || 0,
+      t
+    ),
+    declaredAltitudeMeters:
+      Number.isFinite(a.declaredAltitudeMeters) &&
+      Number.isFinite(b.declaredAltitudeMeters)
+        ? lerp(a.declaredAltitudeMeters, b.declaredAltitudeMeters, t)
+        : Number.isFinite(a.declaredAltitudeMeters)
+          ? a.declaredAltitudeMeters
+          : Number.isFinite(b.declaredAltitudeMeters)
+            ? b.declaredAltitudeMeters
+            : null,
+    declaredAltitudeFeet:
+      Number.isFinite(a.declaredAltitudeFeet) &&
+      Number.isFinite(b.declaredAltitudeFeet)
+        ? lerp(a.declaredAltitudeFeet, b.declaredAltitudeFeet, t)
+        : Number.isFinite(a.declaredAltitudeFeet)
+          ? a.declaredAltitudeFeet
+          : Number.isFinite(b.declaredAltitudeFeet)
+            ? b.declaredAltitudeFeet
+            : null
   }
 }
 
 function quadraticBezier(p0, p1, p2, t) {
   const u = 1 - t
-  return {
+  const q = {
+    ...p0,
     lon: u * u * p0.lon + 2 * u * t * p1.lon + t * t * p2.lon,
     lat: u * u * p0.lat + 2 * u * t * p1.lat + t * t * p2.lat,
     ele:
       u * u * (p0.ele || 0) +
       2 * u * t * (p1.ele || 0) +
-      t * t * (p2.ele || 0)
+      t * t * (p2.ele || 0),
+    groundAltitudeMeters:
+      u * u * (p0.groundAltitudeMeters || 0) +
+      2 * u * t * (p1.groundAltitudeMeters || 0) +
+      t * t * (p2.groundAltitudeMeters || 0)
   }
+
+  if (
+    Number.isFinite(p0.declaredAltitudeMeters) &&
+    Number.isFinite(p1.declaredAltitudeMeters) &&
+    Number.isFinite(p2.declaredAltitudeMeters)
+  ) {
+    q.declaredAltitudeMeters =
+      u * u * p0.declaredAltitudeMeters +
+      2 * u * t * p1.declaredAltitudeMeters +
+      t * t * p2.declaredAltitudeMeters
+  } else {
+    q.declaredAltitudeMeters = null
+  }
+
+  if (
+    Number.isFinite(p0.declaredAltitudeFeet) &&
+    Number.isFinite(p1.declaredAltitudeFeet) &&
+    Number.isFinite(p2.declaredAltitudeFeet)
+  ) {
+    q.declaredAltitudeFeet =
+      u * u * p0.declaredAltitudeFeet +
+      2 * u * t * p1.declaredAltitudeFeet +
+      t * t * p2.declaredAltitudeFeet
+  } else {
+    q.declaredAltitudeFeet = null
+  }
+
+  return q
 }
 
 function dedupeNearPoints(points, epsilon = 1e-9) {
@@ -125,15 +278,55 @@ function buildRoundedPath(points, options = {}) {
     }
 
     const entry = {
+      ...curr,
       lon: curr.lon - inDirForward.x * trim,
       lat: curr.lat - inDirForward.y * trim,
-      ele: lerp(curr.ele || 0, prev.ele || 0, trim / inLen)
+      ele: lerp(curr.ele || 0, prev.ele || 0, trim / inLen),
+      groundAltitudeMeters: lerp(
+        curr.groundAltitudeMeters || curr.ele || 0,
+        prev.groundAltitudeMeters || prev.ele || 0,
+        trim / inLen
+      ),
+      declaredAltitudeMeters:
+        Number.isFinite(curr.declaredAltitudeMeters) &&
+        Number.isFinite(prev.declaredAltitudeMeters)
+          ? lerp(
+              curr.declaredAltitudeMeters,
+              prev.declaredAltitudeMeters,
+              trim / inLen
+            )
+          : curr.declaredAltitudeMeters,
+      declaredAltitudeFeet:
+        Number.isFinite(curr.declaredAltitudeFeet) &&
+        Number.isFinite(prev.declaredAltitudeFeet)
+          ? lerp(curr.declaredAltitudeFeet, prev.declaredAltitudeFeet, trim / inLen)
+          : curr.declaredAltitudeFeet
     }
 
     const exit = {
+      ...curr,
       lon: curr.lon + outDirForward.x * trim,
       lat: curr.lat + outDirForward.y * trim,
-      ele: lerp(curr.ele || 0, next.ele || 0, trim / outLen)
+      ele: lerp(curr.ele || 0, next.ele || 0, trim / outLen),
+      groundAltitudeMeters: lerp(
+        curr.groundAltitudeMeters || curr.ele || 0,
+        next.groundAltitudeMeters || next.ele || 0,
+        trim / outLen
+      ),
+      declaredAltitudeMeters:
+        Number.isFinite(curr.declaredAltitudeMeters) &&
+        Number.isFinite(next.declaredAltitudeMeters)
+          ? lerp(
+              curr.declaredAltitudeMeters,
+              next.declaredAltitudeMeters,
+              trim / outLen
+            )
+          : curr.declaredAltitudeMeters,
+      declaredAltitudeFeet:
+        Number.isFinite(curr.declaredAltitudeFeet) &&
+        Number.isFinite(next.declaredAltitudeFeet)
+          ? lerp(curr.declaredAltitudeFeet, next.declaredAltitudeFeet, trim / outLen)
+          : curr.declaredAltitudeFeet
     }
 
     out.push(entry)
@@ -197,11 +390,6 @@ function wrapAngle(angle) {
   while (angle > Math.PI) angle -= Math.PI * 2
   while (angle < -Math.PI) angle += Math.PI * 2
   return angle
-}
-
-function smoothstep(edge0, edge1, x) {
-  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
-  return t * t * (3 - 2 * t)
 }
 
 function computeCurvatureFactor(points, distances, distanceProgress, sampleDistance) {
@@ -271,6 +459,63 @@ function computeLocalSignedTurn(points, distances, distanceProgress, sampleDista
   const headingAfter = computeHeadingRadians(p2, p3)
 
   return wrapAngle(headingAfter - headingBefore)
+}
+
+function getRouteDeclaredAltitudeMeters(points) {
+  if (!points?.length) return null
+
+  for (const point of points) {
+    if (Number.isFinite(point?.declaredAltitudeMeters)) {
+      return point.declaredAltitudeMeters
+    }
+  }
+
+  return null
+}
+
+function getDeclaredOrFallbackAltitudeMeters(point, routeDeclaredAltitudeMeters = null) {
+  if (Number.isFinite(point?.declaredAltitudeMeters)) return point.declaredAltitudeMeters
+  if (Number.isFinite(routeDeclaredAltitudeMeters)) return routeDeclaredAltitudeMeters
+  if (Number.isFinite(point?.ele)) return point.ele
+  if (Number.isFinite(point?.groundAltitudeMeters)) return point.groundAltitudeMeters
+  return 0
+}
+
+function getTrackAltitudeAtProgress(
+  point,
+  distanceProgress,
+  totalDistance,
+  routeDeclaredAltitudeMeters = null
+) {
+  const ground = Number.isFinite(point?.groundAltitudeMeters)
+    ? point.groundAltitudeMeters
+    : Number.isFinite(point?.ele)
+      ? point.ele
+      : 0
+
+  const cruise = getDeclaredOrFallbackAltitudeMeters(
+    point,
+    routeDeclaredAltitudeMeters
+  )
+
+  if (totalDistance <= 0) return ground
+  if (cruise <= ground) return cruise
+
+  const progress = clamp(distanceProgress / totalDistance, 0, 1)
+
+  let altitudeFactor = 1
+
+  if (progress < PROFILE_CLIMB_END) {
+    altitudeFactor = smoothstep(
+      PROFILE_START_GROUND_HOLD,
+      PROFILE_CLIMB_END,
+      progress
+    )
+  } else if (progress > PROFILE_DESCENT_START) {
+    altitudeFactor = 1 - smoothstep(PROFILE_DESCENT_START, 1, progress)
+  }
+
+  return lerp(ground, cruise, clamp(altitudeFactor, 0, 1))
 }
 
 function flyToPathTopDown(viewer, positions) {
@@ -376,10 +621,7 @@ function polygonCoordinatesToDegreesArray(coords) {
     typeof coords[0][0][0] === 'number'
   ) {
     ring = coords[0]
-  } else if (
-    Array.isArray(coords[0]) &&
-    typeof coords[0][0] === 'number'
-  ) {
+  } else if (Array.isArray(coords[0]) && typeof coords[0][0] === 'number') {
     ring = coords
   } else if (
     Array.isArray(coords[0]) &&
@@ -614,21 +856,33 @@ export default function CesiumMap({
   const airspaceEntitiesRef = useRef([])
 
   const renderedTrackPoints = useMemo(() => {
-    return trackPoints || []
+    return (trackPoints || []).map(enrichPointWithAltitude)
+  }, [trackPoints])
+
+  useEffect(() => {
+    console.log('📦 raw trackPoints sample:', trackPoints?.slice?.(0, 3))
   }, [trackPoints])
 
   const navigableTrackPoints = useMemo(() => {
-    if (!trackPoints?.length) return []
-    if (!interpretLastAsAlternate) return trackPoints
-    if (trackPoints.length <= 1) return trackPoints
-    return trackPoints.slice(0, -1)
-  }, [trackPoints, interpretLastAsAlternate])
+    if (!renderedTrackPoints?.length) return []
+    if (!interpretLastAsAlternate) return renderedTrackPoints
+    if (renderedTrackPoints.length <= 1) return renderedTrackPoints
+    return renderedTrackPoints.slice(0, -1)
+  }, [renderedTrackPoints, interpretLastAsAlternate])
 
   const alternatePoint = useMemo(() => {
     if (!interpretLastAsAlternate) return null
-    if (!trackPoints?.length || trackPoints.length <= 1) return null
-    return trackPoints[trackPoints.length - 1]
-  }, [trackPoints, interpretLastAsAlternate])
+    if (!renderedTrackPoints?.length || renderedTrackPoints.length <= 1) return null
+    return renderedTrackPoints[renderedTrackPoints.length - 1]
+  }, [renderedTrackPoints, interpretLastAsAlternate])
+
+  const routeDeclaredAltitudeMeters = useMemo(() => {
+    return getRouteDeclaredAltitudeMeters(renderedTrackPoints)
+  }, [renderedTrackPoints])
+
+  useEffect(() => {
+    console.log('🛫 routeDeclaredAltitudeMeters:', routeDeclaredAltitudeMeters)
+  }, [routeDeclaredAltitudeMeters])
 
   const clearReportingPoints = () => {
     const viewer = viewerRef.current
@@ -714,25 +968,7 @@ export default function CesiumMap({
       const degreesArray = polygonCoordinatesToDegreesArray(coords)
       const style = getAirspaceStyle(airspace)
 
-      const typeInfo = {
-        name: airspace?.name || airspace?.properties?.name,
-        type: getAirspaceTypeCode(airspace),
-        category: airspace?.category || airspace?.properties?.category,
-        class: airspace?.properties?.class,
-        style: style?.key || null
-      }
-
-      if (degreesArray.length < 6) {
-        console.log('⚠️ airspace skip geometry', typeInfo, coords)
-        continue
-      }
-
-      console.log('🧪 airspace parsed', {
-        ...typeInfo,
-        render: Boolean(style?.enabled),
-        points: degreesArray.length / 2
-      })
-
+      if (degreesArray.length < 6) continue
       if (!style?.enabled) continue
 
       const { height, extrudedHeight } = getAirspaceHeights(airspace)
@@ -782,14 +1018,11 @@ export default function CesiumMap({
   const smoothedPath = useMemo(() => {
     if (!navigableTrackPoints?.length) return []
 
-    const rounded = buildRoundedPath(navigableTrackPoints, {
+    return buildRoundedPath(navigableTrackPoints, {
       cornerRadius: 0.006,
       minCornerAngleDeg: 10,
       samplesPerCorner: 10
     })
-
-    console.log('🧩 rounded path points:', rounded.length)
-    return rounded
   }, [navigableTrackPoints])
 
   const pathDistances = useMemo(() => {
@@ -827,9 +1060,6 @@ export default function CesiumMap({
 
         const data = await response.json()
         const reportingPoints = normalizeReportingPointsResponse(data)
-
-        console.log('🟡 reporting points:', reportingPoints.length)
-
         addReportingPointsToMap(reportingPoints)
       } catch (error) {
         if (error.name === 'AbortError') return
@@ -873,9 +1103,6 @@ export default function CesiumMap({
 
         const data = await response.json()
         const airspaces = normalizeAirspacesResponse(data)
-
-        console.log('🟥 airspaces:', airspaces.length)
-
         addAirspacesToMap(airspaces)
       } catch (error) {
         if (error.name === 'AbortError') return
@@ -969,8 +1196,6 @@ export default function CesiumMap({
     viewerRef.current = viewer
     window.viewer = viewer
 
-    console.log('✅ Viewer creato')
-
     return () => {
       if (flightRef.current.animationId) {
         cancelAnimationFrame(flightRef.current.animationId)
@@ -989,8 +1214,6 @@ export default function CesiumMap({
     const viewer = viewerRef.current
     Cesium = initCesium()
 
-    console.log('🗺️ render path', smoothedPath.length)
-
     if (!viewer) return
 
     viewer.entities.removeAll()
@@ -1000,14 +1223,33 @@ export default function CesiumMap({
 
     if (!smoothedPath?.length) return
 
-    const pathHeightOffset = 200
+    const totalDistance = pathDistances[pathDistances.length - 1] || 0
 
     const mainPositions = smoothedPath.map((p, i) => {
-      if (i < 5) console.log('📍 path sample', p)
+      const distanceProgress = pathDistances[i] || 0
+      const trackAltitude = getTrackAltitudeAtProgress(
+        p,
+        distanceProgress,
+        totalDistance,
+        routeDeclaredAltitudeMeters
+      )
+
+      if (i < 5) {
+        console.log('🛤️ track altitude sample:', {
+          i,
+          lat: p.lat,
+          lon: p.lon,
+          ground: p.groundAltitudeMeters,
+          declared: p.declaredAltitudeMeters,
+          routeDeclaredAltitudeMeters,
+          finalTrackAltitude: trackAltitude
+        })
+      }
+
       return Cesium.Cartesian3.fromDegrees(
         p.lon,
         p.lat,
-        (p.ele || 0) + pathHeightOffset
+        trackAltitude + PATH_DISPLAY_OFFSET_METERS
       )
     })
 
@@ -1030,19 +1272,20 @@ export default function CesiumMap({
       const plannedLandingPoint =
         navigableTrackPoints[navigableTrackPoints.length - 1]
 
-      const alternateCartesian = Cesium.Cartesian3.fromDegrees(
-        alternatePoint.lon,
-        alternatePoint.lat,
-        (alternatePoint.ele || 0) + pathHeightOffset
-      )
-
       const alternatePositions = [
         Cesium.Cartesian3.fromDegrees(
           plannedLandingPoint.lon,
           plannedLandingPoint.lat,
-          (plannedLandingPoint.ele || 0) + pathHeightOffset
+          (plannedLandingPoint.groundAltitudeMeters ||
+            plannedLandingPoint.ele ||
+            0) + PATH_DISPLAY_OFFSET_METERS
         ),
-        alternateCartesian
+        Cesium.Cartesian3.fromDegrees(
+          alternatePoint.lon,
+          alternatePoint.lat,
+          (alternatePoint.groundAltitudeMeters || alternatePoint.ele || 0) +
+            PATH_DISPLAY_OFFSET_METERS
+        )
       ]
 
       viewer.entities.add({
@@ -1054,12 +1297,12 @@ export default function CesiumMap({
         }
       })
 
-      allVisiblePositions = [...allVisiblePositions, alternateCartesian]
+      allVisiblePositions = [...allVisiblePositions, ...alternatePositions]
     }
 
     pathPositionsRef.current = allVisiblePositions
 
-    const markerHeightOffset = pathHeightOffset + 20
+    const markerHeightOffset = 20
 
     const start = smoothedPath[0]
     const end = smoothedPath[smoothedPath.length - 1]
@@ -1070,7 +1313,7 @@ export default function CesiumMap({
         position: Cesium.Cartesian3.fromDegrees(
           start.lon,
           start.lat,
-          (start.ele || 0) + markerHeightOffset
+          (start.groundAltitudeMeters || start.ele || 0) + markerHeightOffset
         ),
         point: {
           pixelSize: 12,
@@ -1095,7 +1338,7 @@ export default function CesiumMap({
         position: Cesium.Cartesian3.fromDegrees(
           start.lon,
           start.lat,
-          (start.ele || 0) + markerHeightOffset
+          (start.groundAltitudeMeters || start.ele || 0) + markerHeightOffset
         ),
         point: {
           pixelSize: 12,
@@ -1120,7 +1363,7 @@ export default function CesiumMap({
         position: Cesium.Cartesian3.fromDegrees(
           end.lon,
           end.lat,
-          (end.ele || 0) + markerHeightOffset
+          (end.groundAltitudeMeters || end.ele || 0) + markerHeightOffset
         ),
         point: {
           pixelSize: 12,
@@ -1147,7 +1390,8 @@ export default function CesiumMap({
         position: Cesium.Cartesian3.fromDegrees(
           alternatePoint.lon,
           alternatePoint.lat,
-          (alternatePoint.ele || 0) + markerHeightOffset
+          (alternatePoint.groundAltitudeMeters || alternatePoint.ele || 0) +
+            markerHeightOffset
         ),
         point: {
           pixelSize: 12,
@@ -1170,13 +1414,18 @@ export default function CesiumMap({
     }
 
     flyToPathTopDown(viewer, allVisiblePositions)
-  }, [smoothedPath, interpretLastAsAlternate, alternatePoint, navigableTrackPoints])
+  }, [
+    smoothedPath,
+    pathDistances,
+    interpretLastAsAlternate,
+    alternatePoint,
+    navigableTrackPoints,
+    routeDeclaredAltitudeMeters
+  ])
 
   useEffect(() => {
     const viewer = viewerRef.current
     Cesium = initCesium()
-
-    console.log('🎬 Play trigger', shouldPlay)
 
     if (!viewer || !smoothedPath?.length || !shouldPlay) return
 
@@ -1211,7 +1460,6 @@ export default function CesiumMap({
     const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
 
-    const cruiseHeightOffset = 500
     const introHighHeightOffset = 2500
     const outroHeightOffset = 2500
     const introGroundOffset = 80
@@ -1231,10 +1479,13 @@ export default function CesiumMap({
     const startAheadPoint =
       smoothedPath[Math.min(1, smoothedPath.length - 1)] || startPoint
 
+    const startGroundAltitude =
+      startPoint.groundAltitudeMeters || startPoint.ele || 0
+
     const introStartDestination = Cesium.Cartesian3.fromDegrees(
       startPoint.lon,
       startPoint.lat,
-      Math.min((startPoint.ele || 0) + introHighHeightOffset, 4000)
+      Math.min(startGroundAltitude + introHighHeightOffset, 4000)
     )
 
     const introStartHeading = computeHeadingRadians(startPoint, startAheadPoint)
@@ -1242,10 +1493,6 @@ export default function CesiumMap({
     const endPoint = smoothedPath[smoothedPath.length - 1]
     const endBeforePoint =
       smoothedPath[Math.max(smoothedPath.length - 2, 0)] || endPoint
-
-    console.log(
-      '🚀 START flyover intro-drop + intro-pull-up + intro-settle + cruise + arrival-level + outro'
-    )
 
     const tick = (ts) => {
       if (state.stopped) return
@@ -1258,7 +1505,7 @@ export default function CesiumMap({
       let current = null
       let ahead = null
       let dynamicPitch = cruisePitch
-      let dynamicHeightOffset = cruiseHeightOffset
+      let cameraAltitude = startGroundAltitude + CAMERA_ABOVE_TRACK_METERS
       let dynamicRoll = 0
 
       if (phase === 'intro-drop') {
@@ -1266,9 +1513,10 @@ export default function CesiumMap({
 
         current = startPoint
         ahead = startAheadPoint
-        dynamicHeightOffset = lerp(
-          introHighHeightOffset,
-          introGroundOffset,
+        const groundAltitude = current.groundAltitudeMeters || current.ele || 0
+        cameraAltitude = lerp(
+          groundAltitude + introHighHeightOffset,
+          groundAltitude + introGroundOffset,
           t
         )
         dynamicPitch = lerp(verticalPitch, groundPitch, t)
@@ -1282,11 +1530,8 @@ export default function CesiumMap({
         const t = easeInOut(phaseElapsed / introPullUpDuration)
 
         current =
-          interpolateAlongPath(
-            smoothedPath,
-            pathDistances,
-            distanceProgress
-          ) || startPoint
+          interpolateAlongPath(smoothedPath, pathDistances, distanceProgress) ||
+          startPoint
 
         ahead =
           interpolateAlongPath(
@@ -1295,7 +1540,20 @@ export default function CesiumMap({
             Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
           ) || startAheadPoint
 
-        dynamicHeightOffset = lerp(introGroundOffset, cruiseHeightOffset, t)
+        const groundAltitude = current.groundAltitudeMeters || current.ele || 0
+        const trackAltitude = getTrackAltitudeAtProgress(
+          current,
+          distanceProgress,
+          totalDistance,
+          routeDeclaredAltitudeMeters
+        )
+
+        cameraAltitude = lerp(
+          groundAltitude + introGroundOffset,
+          trackAltitude + CAMERA_ABOVE_TRACK_METERS,
+          t
+        )
+
         dynamicPitch = lerp(groundPitch, climbPitch, t)
         dynamicRoll = 0
 
@@ -1310,11 +1568,8 @@ export default function CesiumMap({
         const t = easeInOut(phaseElapsed / introSettleDuration)
 
         current =
-          interpolateAlongPath(
-            smoothedPath,
-            pathDistances,
-            distanceProgress
-          ) || startPoint
+          interpolateAlongPath(smoothedPath, pathDistances, distanceProgress) ||
+          startPoint
 
         ahead =
           interpolateAlongPath(
@@ -1323,7 +1578,14 @@ export default function CesiumMap({
             Math.min(distanceProgress + tangentLookAheadDistance, totalDistance)
           ) || startAheadPoint
 
-        dynamicHeightOffset = cruiseHeightOffset
+        const trackAltitude = getTrackAltitudeAtProgress(
+          current,
+          distanceProgress,
+          totalDistance,
+          routeDeclaredAltitudeMeters
+        )
+
+        cameraAltitude = trackAltitude + CAMERA_ABOVE_TRACK_METERS
         dynamicPitch = lerp(climbPitch, cruisePitch, t)
         dynamicRoll = 0
 
@@ -1370,10 +1632,16 @@ export default function CesiumMap({
         )
 
         if (!current || !ahead) {
-          console.warn('⚠️ interpolazione fallita')
           state.animationId = null
           return
         }
+
+        const trackAltitude = getTrackAltitudeAtProgress(
+          current,
+          distanceProgress,
+          totalDistance,
+          routeDeclaredAltitudeMeters
+        )
 
         const bankLeadDistance = totalDistance * 0.0018
 
@@ -1408,7 +1676,7 @@ export default function CesiumMap({
         state.roll = lerp(state.roll, targetRoll, rollT)
 
         dynamicPitch = cruisePitch
-        dynamicHeightOffset = cruiseHeightOffset
+        cameraAltitude = trackAltitude + CAMERA_ABOVE_TRACK_METERS
         dynamicRoll = state.roll
       } else if (phase === 'final-approach') {
         distanceProgress +=
@@ -1433,17 +1701,30 @@ export default function CesiumMap({
         )
 
         if (!current || !ahead) {
-          console.warn('⚠️ interpolazione fallita')
           state.animationId = null
           return
         }
+
+        const trackAltitude = getTrackAltitudeAtProgress(
+          current,
+          distanceProgress,
+          totalDistance,
+          routeDeclaredAltitudeMeters
+        )
+
+        const groundAltitude = current.groundAltitudeMeters || current.ele || 0
 
         const approachStart = totalDistance - finalApproachDistance
         const t = easeInOut(
           (distanceProgress - approachStart) / finalApproachDistance
         )
 
-        dynamicHeightOffset = lerp(cruiseHeightOffset, introGroundOffset, t)
+        cameraAltitude = lerp(
+          trackAltitude + CAMERA_ABOVE_TRACK_METERS,
+          groundAltitude + introGroundOffset,
+          t
+        )
+
         dynamicPitch = lerp(cruisePitch, groundPitch, t)
 
         const rollT = 1 - Math.exp(-3.0 * dt)
@@ -1454,7 +1735,8 @@ export default function CesiumMap({
 
         current = endPoint
         ahead = endPoint
-        dynamicHeightOffset = introGroundOffset
+        const groundAltitude = current.groundAltitudeMeters || current.ele || 0
+        cameraAltitude = groundAltitude + introGroundOffset
         dynamicPitch = groundPitch
 
         const rollT = 1 - Math.exp(-3.0 * dt)
@@ -1470,7 +1752,14 @@ export default function CesiumMap({
 
         current = endPoint
         ahead = endPoint
-        dynamicHeightOffset = lerp(introGroundOffset, outroHeightOffset, t)
+        const groundAltitude = current.groundAltitudeMeters || current.ele || 0
+
+        cameraAltitude = lerp(
+          groundAltitude + introGroundOffset,
+          groundAltitude + outroHeightOffset,
+          t
+        )
+
         dynamicPitch = lerp(groundPitch, verticalPitch, t)
 
         const rollT = 1 - Math.exp(-3.0 * dt)
@@ -1478,7 +1767,6 @@ export default function CesiumMap({
         dynamicRoll = state.roll
 
         if (t >= 1) {
-          console.log('🏁 Fine animazione')
           state.animationId = null
 
           if (recordEnabled) {
@@ -1495,7 +1783,7 @@ export default function CesiumMap({
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
         current.lat,
-        Math.min((current.ele || 0) + dynamicHeightOffset, 4000)
+        Math.min(cameraAltitude, 4000)
       )
 
       const heading =
@@ -1564,7 +1852,8 @@ export default function CesiumMap({
     smoothedPath,
     pathDistances,
     recordEnabled,
-    onPositionChange
+    onPositionChange,
+    routeDeclaredAltitudeMeters
   ])
 
   useEffect(() => {
