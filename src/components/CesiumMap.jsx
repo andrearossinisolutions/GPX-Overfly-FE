@@ -370,23 +370,18 @@ function polygonCoordinatesToDegreesArray(coords) {
 
   let ring = null
 
-  // Polygon GeoJSON => [ [ [lon,lat], ... ] ]
   if (
     Array.isArray(coords[0]) &&
     Array.isArray(coords[0][0]) &&
     typeof coords[0][0][0] === 'number'
   ) {
     ring = coords[0]
-  }
-  // Ring diretto => [ [lon,lat], ... ]
-  else if (
+  } else if (
     Array.isArray(coords[0]) &&
     typeof coords[0][0] === 'number'
   ) {
     ring = coords
-  }
-  // MultiPolygon => [ [ [ [lon,lat], ... ] ] ]
-  else if (
+  } else if (
     Array.isArray(coords[0]) &&
     Array.isArray(coords[0][0]) &&
     Array.isArray(coords[0][0][0])
@@ -480,25 +475,112 @@ function getAirspaceHeights(airspace) {
   }
 }
 
-function isCtrAirspace(airspace) {
-  const values = [
-    airspace?.type,
-    airspace?.category,
-    airspace?.name,
-    airspace?.properties?.type,
-    airspace?.properties?.category,
-    airspace?.properties?.class,
-    airspace?.properties?.name
-  ]
-    .filter(Boolean)
-    .map((v) => String(v).toUpperCase())
+function getAirspaceTypeCode(airspace) {
+  const rawType =
+    airspace?.type ??
+    airspace?.properties?.type ??
+    airspace?.category ??
+    airspace?.properties?.category
 
-  return values.some(
-    (v) =>
-      v.includes('CTR') ||
-      v.includes('CONTROL ZONE') ||
-      v.includes('CONTROLZONE')
-  )
+  const typeCode = Number(rawType)
+  return Number.isFinite(typeCode) ? typeCode : null
+}
+
+function createAirspaceStyleMap() {
+  return {
+    2: {
+      key: 'D',
+      label: 'D',
+      enabled: true,
+      fillColorCss: '#ff4d4d',
+      fillAlpha: 0.18,
+      lineColorCss: '#ff4d4d',
+      groundLineColorCss: '#ff4d4d',
+      groundDashed: false,
+      showVolume: true,
+      showOutline: true
+    },
+    3: {
+      key: 'P',
+      label: 'P',
+      enabled: true,
+      fillColorCss: '#ff4d4d',
+      fillAlpha: 0.18,
+      lineColorCss: '#ff4d4d',
+      groundLineColorCss: '#ff4d4d',
+      groundDashed: false,
+      showVolume: true,
+      showOutline: true
+    },
+    4: {
+      key: 'CTR',
+      label: 'CTR',
+      enabled: true,
+      fillColorCss: '#4DA3FF',
+      fillAlpha: 0.18,
+      lineColorCss: '#4DA3FF',
+      groundLineColorCss: '#4DA3FF',
+      groundDashed: false,
+      showVolume: true,
+      showOutline: true
+    },
+    13: {
+      key: 'ATZ',
+      label: 'ATZ',
+      enabled: true,
+      fillColorCss: '#4DA3FF',
+      fillAlpha: 0.10,
+      lineColorCss: '#4DA3FF',
+      groundLineColorCss: '#4DA3FF',
+      groundDashed: true,
+      showVolume: true,
+      showOutline: true
+    },
+    14: {
+      key: 'MATZ',
+      label: 'MATZ',
+      enabled: true,
+      fillColorCss: '#4DA3FF',
+      fillAlpha: 0.10,
+      lineColorCss: '#4DA3FF',
+      groundLineColorCss: '#4DA3FF',
+      groundDashed: true,
+      showVolume: true,
+      showOutline: true
+    }
+  }
+}
+
+const AIRSPACE_STYLE_BY_TYPE = createAirspaceStyleMap()
+
+function materializeAirspaceStyle(style) {
+  if (!style || !Cesium) return null
+
+  return {
+    ...style,
+    fillColor: Cesium.Color.fromCssColorString(style.fillColorCss).withAlpha(
+      style.fillAlpha ?? 0.18
+    ),
+    lineColor: Cesium.Color.fromCssColorString(style.lineColorCss),
+    groundLineColor: Cesium.Color.fromCssColorString(style.groundLineColorCss)
+  }
+}
+
+function getAirspaceStyle(airspace) {
+  const typeCode = getAirspaceTypeCode(airspace)
+  if (typeCode == null) return null
+  return materializeAirspaceStyle(AIRSPACE_STYLE_BY_TYPE[typeCode] || null)
+}
+
+function createGroundLineMaterial(style) {
+  if (style.groundDashed) {
+    return new Cesium.PolylineDashMaterialProperty({
+      color: style.groundLineColor,
+      dashLength: 18
+    })
+  }
+
+  return style.groundLineColor
 }
 
 export default function CesiumMap({
@@ -600,18 +682,17 @@ export default function CesiumMap({
 
     let rendered = 0
 
-    const ctrFillColor = Cesium.Color.fromCssColorString('#4DA3FF').withAlpha(0.18)
-    const ctrLineColor = Cesium.Color.fromCssColorString('#4DA3FF')
-
     for (const airspace of airspaces) {
       const coords = airspace?.geometry?.coordinates
       const degreesArray = polygonCoordinatesToDegreesArray(coords)
+      const style = getAirspaceStyle(airspace)
 
       const typeInfo = {
         name: airspace?.name || airspace?.properties?.name,
-        type: airspace?.type || airspace?.properties?.type,
+        type: getAirspaceTypeCode(airspace),
         category: airspace?.category || airspace?.properties?.category,
-        class: airspace?.properties?.class
+        class: airspace?.properties?.class,
+        style: style?.key || null
       }
 
       if (degreesArray.length < 6) {
@@ -619,45 +700,48 @@ export default function CesiumMap({
         continue
       }
 
-      const ctr = isCtrAirspace(airspace)
       console.log('🧪 airspace parsed', {
-        ctr,
         ...typeInfo,
+        render: Boolean(style?.enabled),
         points: degreesArray.length / 2
       })
 
-      if (!ctr) continue
+      if (!style?.enabled) continue
 
       const { height, extrudedHeight } = getAirspaceHeights(airspace)
       const baseHeight = Math.max(0, height)
       const topHeight = Math.max(baseHeight + 200, extrudedHeight)
 
-      const polygonEntity = viewer.entities.add({
-        polygon: {
-          hierarchy: Cesium.Cartesian3.fromDegreesArray(degreesArray),
-          height: baseHeight,
-          extrudedHeight: topHeight,
-          material: ctrFillColor,
-          outline: true,
-          outlineColor: ctrLineColor,
-          perPositionHeight: false
-        }
-      })
+      if (style.showVolume) {
+        const polygonEntity = viewer.entities.add({
+          polygon: {
+            hierarchy: Cesium.Cartesian3.fromDegreesArray(degreesArray),
+            height: baseHeight,
+            extrudedHeight: topHeight,
+            material: style.fillColor,
+            outline: style.showOutline,
+            outlineColor: style.lineColor,
+            perPositionHeight: false
+          }
+        })
+
+        airspaceEntitiesRef.current.push(polygonEntity)
+      }
 
       const groundOutlineEntity = viewer.entities.add({
         polyline: {
           positions: Cesium.Cartesian3.fromDegreesArray(degreesArray),
           width: 3,
-          material: ctrLineColor,
+          material: createGroundLineMaterial(style),
           clampToGround: true
         }
       })
 
-      airspaceEntitiesRef.current.push(polygonEntity, groundOutlineEntity)
+      airspaceEntitiesRef.current.push(groundOutlineEntity)
       rendered++
     }
 
-    console.log('✅ CTR rendered:', rendered)
+    console.log('✅ Airspaces rendered:', rendered)
   }
 
   const flightRef = useRef({
