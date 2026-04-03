@@ -277,7 +277,7 @@ function flyToPathTopDown(viewer, positions) {
   if (!viewer || !positions?.length || !Cesium) return
 
   const boundingSphere = Cesium.BoundingSphere.fromPoints(positions)
-  const range = Math.max(boundingSphere.radius * 3.0, 1500)
+  const range = Math.max(boundingSphere.radius * 3.5, 1500)
 
   viewer.camera.flyToBoundingSphere(boundingSphere, {
     duration: 1.2,
