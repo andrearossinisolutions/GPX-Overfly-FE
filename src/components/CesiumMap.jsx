@@ -524,12 +524,10 @@ function getTrackAltitudeAtProgress(
 }
 
 function buildWaypointLabel(point) {
-  const parts = []
-
-  if (point?.sym) parts.push(point.sym)
-  if (point?.name) parts.push(point.name)
-
-  return parts.join(' · ')
+  if (point?.sym && point?.name) return `${point.sym} · ${point.name}`
+  if (point?.sym) return point.sym
+  if (point?.name) return point.name
+  return 'Turnpoint'
 }
 
 function buildEndpointLabel(baseLabel, point) {
@@ -543,7 +541,6 @@ function buildEndpointLabel(baseLabel, point) {
 
 function isIntermediateWaypoint(point, index, totalPoints, interpretLastAsAlternate) {
   if (!point) return false
-  if (!point.name && !point.sym) return false
   if (index === 0) return false
 
   const landingIndex = totalPoints - 1
@@ -552,6 +549,30 @@ function isIntermediateWaypoint(point, index, totalPoints, interpretLastAsAltern
   if (interpretLastAsAlternate && index === totalPoints - 1) return false
 
   return true
+}
+
+function computeDegreesArrayCenter(degreesArray) {
+  if (!degreesArray?.length || degreesArray.length < 2) return null
+
+  let sumLon = 0
+  let sumLat = 0
+  let count = 0
+
+  for (let i = 0; i < degreesArray.length - 1; i += 2) {
+    const lon = degreesArray[i]
+    const lat = degreesArray[i + 1]
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+    sumLon += lon
+    sumLat += lat
+    count++
+  }
+
+  if (!count) return null
+
+  return {
+    lon: sumLon / count,
+    lat: sumLat / count
+  }
 }
 
 function flyToPathTopDown(viewer, positions) {
@@ -1022,6 +1043,11 @@ export default function CesiumMap({
       const { height, extrudedHeight } = getAirspaceHeights(airspace)
       const baseHeight = Math.max(0, height)
       const topHeight = Math.max(baseHeight + 200, extrudedHeight)
+      const airspaceName =
+        airspace?.name ||
+        airspace?.properties?.name ||
+        style?.label ||
+        'Airspace'
 
       if (style.showVolume) {
         const polygonEntity = viewer.entities.add({
@@ -1049,6 +1075,31 @@ export default function CesiumMap({
       })
 
       airspaceEntitiesRef.current.push(groundOutlineEntity)
+
+      const center = computeDegreesArrayCenter(degreesArray)
+      if (center) {
+        const labelEntity = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(
+            center.lon,
+            center.lat,
+            baseHeight + Math.max((topHeight - baseHeight) * 0.5, 250)
+          ),
+          label: {
+            text: airspaceName,
+            font: 'bold 14px sans-serif',
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            fillColor: style.lineColor,
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 3,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            scale: 0.9
+          }
+        })
+
+        airspaceEntitiesRef.current.push(labelEntity)
+      }
+
       rendered++
     }
 
@@ -1076,7 +1127,6 @@ export default function CesiumMap({
       }
 
       const labelText = buildWaypointLabel(point)
-      if (!labelText) return
 
       const entity = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(
