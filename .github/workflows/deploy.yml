@@ -1,0 +1,40 @@
+name: Deploy frontend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-frontend:
+    runs-on: [self-hosted, linux, x64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Prepare release dir
+        run: |
+          RELEASE_DIR=/srv/myapp/frontend/releases/${GITHUB_SHA}
+          mkdir -p "$RELEASE_DIR"
+
+      - name: Copy dist
+        run: |
+          RELEASE_DIR=/srv/myapp/frontend/releases/${GITHUB_SHA}
+          rsync -a --delete ./dist/ "$RELEASE_DIR"/
+
+      - name: Publish current
+        run: |
+          RELEASE_DIR=/srv/myapp/frontend/releases/${GITHUB_SHA}
+          rsync -a --delete "$RELEASE_DIR"/ /srv/myapp/frontend/current/
