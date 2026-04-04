@@ -539,18 +539,6 @@ function buildEndpointLabel(baseLabel, point) {
   return extras.length ? `${baseLabel}\n${extras.join('\n')}` : baseLabel
 }
 
-function isIntermediateWaypoint(point, index, totalPoints, interpretLastAsAlternate) {
-  if (!point) return false
-  if (index === 0) return false
-
-  const landingIndex = totalPoints - 1
-  if (index === landingIndex) return false
-
-  if (interpretLastAsAlternate && index === totalPoints - 1) return false
-
-  return true
-}
-
 function computeDegreesArrayCenter(degreesArray) {
   if (!degreesArray?.length || degreesArray.length < 2) return null
 
@@ -573,134 +561,6 @@ function computeDegreesArrayCenter(degreesArray) {
     lon: sumLon / count,
     lat: sumLat / count
   }
-}
-
-function flyToPathTopDown(viewer, positions) {
-  if (!viewer || !positions?.length || !Cesium) return
-
-  const boundingSphere = Cesium.BoundingSphere.fromPoints(positions)
-  const range = Math.max(boundingSphere.radius * 3.5, 1500)
-
-  viewer.camera.flyToBoundingSphere(boundingSphere, {
-    duration: 1.2,
-    offset: new Cesium.HeadingPitchRange(
-      0,
-      Cesium.Math.toRadians(-90),
-      range
-    )
-  })
-}
-
-function getSupportedRecordingMimeType() {
-  const candidates = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm'
-  ]
-
-  for (const mimeType of candidates) {
-    if (window.MediaRecorder?.isTypeSupported?.(mimeType)) {
-      return mimeType
-    }
-  }
-
-  return ''
-}
-
-function sanitizeFilename(name = 'gps-overfly') {
-  return name
-    .replace(/\.[^/.]+$/, '')
-    .replace(/[^a-z0-9-_]+/gi, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .toLowerCase() || 'gps-overfly'
-}
-
-function downloadRecording(chunks, filenameBase = 'gps-overfly') {
-  if (!chunks?.length) return
-
-  const blob = new Blob(chunks, { type: 'video/webm' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${sanitizeFilename(filenameBase)}.webm`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function getPathBBox(points) {
-  if (!points?.length) return null
-
-  const lats = points.map((p) => p.lat)
-  const lons = points.map((p) => p.lon)
-
-  return {
-    minLat: Math.min(...lats),
-    maxLat: Math.max(...lats),
-    minLon: Math.min(...lons),
-    maxLon: Math.max(...lons)
-  }
-}
-
-function bboxToString(bbox) {
-  if (!bbox) return ''
-  return `${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`
-}
-
-function normalizeReportingPointsResponse(data) {
-  if (!data) return []
-
-  if (Array.isArray(data.items)) return data.items
-  if (Array.isArray(data.features)) return data.features
-  if (Array.isArray(data)) return data
-
-  return []
-}
-
-function normalizeAirspacesResponse(data) {
-  if (!data) return []
-
-  if (Array.isArray(data.items)) return data.items
-  if (Array.isArray(data.features)) return data.features
-  if (Array.isArray(data)) return data
-
-  return []
-}
-
-function polygonCoordinatesToDegreesArray(coords) {
-  if (!Array.isArray(coords) || !coords.length) return []
-
-  let ring = null
-
-  if (
-    Array.isArray(coords[0]) &&
-    Array.isArray(coords[0][0]) &&
-    typeof coords[0][0][0] === 'number'
-  ) {
-    ring = coords[0]
-  } else if (Array.isArray(coords[0]) && typeof coords[0][0] === 'number') {
-    ring = coords
-  } else if (
-    Array.isArray(coords[0]) &&
-    Array.isArray(coords[0][0]) &&
-    Array.isArray(coords[0][0][0])
-  ) {
-    ring = coords[0][0]
-  }
-
-  if (!ring) return []
-
-  const out = []
-
-  for (const p of ring) {
-    if (!Array.isArray(p) || p.length < 2) continue
-    const lon = Number(p[0])
-    const lat = Number(p[1])
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
-    out.push(lon, lat)
-  }
-
-  return out
 }
 
 function toMeters(value, unit) {
@@ -891,6 +751,139 @@ function arePointsCoincident(a, b, epsilon = 1e-7) {
   )
 }
 
+function hasCoincidentPoint(targetPoint, points, epsilon = 1e-7) {
+  if (!targetPoint || !points?.length) return false
+  return points.some((point) => arePointsCoincident(targetPoint, point, epsilon))
+}
+
+function flyToPathTopDown(viewer, positions) {
+  if (!viewer || !positions?.length || !Cesium) return
+
+  const boundingSphere = Cesium.BoundingSphere.fromPoints(positions)
+  const range = Math.max(boundingSphere.radius * 3.5, 1500)
+
+  viewer.camera.flyToBoundingSphere(boundingSphere, {
+    duration: 1.2,
+    offset: new Cesium.HeadingPitchRange(
+      0,
+      Cesium.Math.toRadians(-90),
+      range
+    )
+  })
+}
+
+function getSupportedRecordingMimeType() {
+  const candidates = [
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm'
+  ]
+
+  for (const mimeType of candidates) {
+    if (window.MediaRecorder?.isTypeSupported?.(mimeType)) {
+      return mimeType
+    }
+  }
+
+  return ''
+}
+
+function sanitizeFilename(name = 'gps-overfly') {
+  return name
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-z0-9-_]+/gi, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase() || 'gps-overfly'
+}
+
+function downloadRecording(chunks, filenameBase = 'gps-overfly') {
+  if (!chunks?.length) return
+
+  const blob = new Blob(chunks, { type: 'video/webm' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${sanitizeFilename(filenameBase)}.webm`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function getPathBBox(points) {
+  if (!points?.length) return null
+
+  const lats = points.map((p) => p.lat)
+  const lons = points.map((p) => p.lon)
+
+  return {
+    minLat: Math.min(...lats),
+    maxLat: Math.max(...lats),
+    minLon: Math.min(...lons),
+    maxLon: Math.max(...lons)
+  }
+}
+
+function bboxToString(bbox) {
+  if (!bbox) return ''
+  return `${bbox.minLon},${bbox.minLat},${bbox.maxLon},${bbox.maxLat}`
+}
+
+function normalizeReportingPointsResponse(data) {
+  if (!data) return []
+
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.features)) return data.features
+  if (Array.isArray(data)) return data
+
+  return []
+}
+
+function normalizeAirspacesResponse(data) {
+  if (!data) return []
+
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.features)) return data.features
+  if (Array.isArray(data)) return data
+
+  return []
+}
+
+function polygonCoordinatesToDegreesArray(coords) {
+  if (!Array.isArray(coords) || !coords.length) return []
+
+  let ring = null
+
+  if (
+    Array.isArray(coords[0]) &&
+    Array.isArray(coords[0][0]) &&
+    typeof coords[0][0][0] === 'number'
+  ) {
+    ring = coords[0]
+  } else if (Array.isArray(coords[0]) && typeof coords[0][0] === 'number') {
+    ring = coords
+  } else if (
+    Array.isArray(coords[0]) &&
+    Array.isArray(coords[0][0]) &&
+    Array.isArray(coords[0][0][0])
+  ) {
+    ring = coords[0][0]
+  }
+
+  if (!ring) return []
+
+  const out = []
+
+  for (const p of ring) {
+    if (!Array.isArray(p) || p.length < 2) continue
+    const lon = Number(p[0])
+    const lat = Number(p[1])
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue
+    out.push(lon, lat)
+  }
+
+  return out
+}
+
 export default function CesiumMap({
   trackPoints,
   shouldPlay,
@@ -933,6 +926,25 @@ export default function CesiumMap({
     if (!renderedTrackPoints?.length || renderedTrackPoints.length <= 1) return null
     return renderedTrackPoints[renderedTrackPoints.length - 1]
   }, [renderedTrackPoints, interpretLastAsAlternate])
+
+  const endpointProtectedPoints = useMemo(() => {
+    const protectedPoints = []
+
+    const startPoint = navigableTrackPoints[0]
+    const endPoint = navigableTrackPoints[navigableTrackPoints.length - 1]
+
+    if (startPoint) protectedPoints.push(startPoint)
+
+    if (endPoint && !hasCoincidentPoint(endPoint, protectedPoints)) {
+      protectedPoints.push(endPoint)
+    }
+
+    if (alternatePoint && !hasCoincidentPoint(alternatePoint, protectedPoints)) {
+      protectedPoints.push(alternatePoint)
+    }
+
+    return protectedPoints
+  }, [navigableTrackPoints, alternatePoint])
 
   const routeDeclaredAltitudeMeters = useMemo(() => {
     return getRouteDeclaredAltitudeMeters(renderedTrackPoints)
@@ -1112,17 +1124,16 @@ export default function CesiumMap({
 
     clearRouteWaypoints()
 
-    const totalPoints = renderedTrackPoints.length
+    const renderedPointsForWaypoints = []
 
-    renderedTrackPoints.forEach((point, index) => {
-      if (
-        !isIntermediateWaypoint(
-          point,
-          index,
-          totalPoints,
-          interpretLastAsAlternate
-        )
-      ) {
+    renderedTrackPoints.forEach((point) => {
+      if (!point) return
+
+      if (hasCoincidentPoint(point, endpointProtectedPoints)) {
+        return
+      }
+
+      if (hasCoincidentPoint(point, renderedPointsForWaypoints)) {
         return
       }
 
@@ -1157,6 +1168,7 @@ export default function CesiumMap({
       })
 
       routeWaypointEntitiesRef.current.push(entity)
+      renderedPointsForWaypoints.push(point)
     })
 
     console.log('📌 Route waypoints rendered:', routeWaypointEntitiesRef.current.length)
@@ -1582,8 +1594,9 @@ export default function CesiumMap({
     interpretLastAsAlternate,
     alternatePoint,
     navigableTrackPoints,
+    renderedTrackPoints,
     routeDeclaredAltitudeMeters,
-    renderedTrackPoints
+    endpointProtectedPoints
   ])
 
   useEffect(() => {
