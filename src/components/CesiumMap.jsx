@@ -1612,13 +1612,13 @@ export default function CesiumMap({
     let phaseElapsed = 0
 
     const totalDistance = pathDistances[pathDistances.length - 1] || 0
-    const baseDistancePerSecondBase = totalDistance * 0.04
+    const baseDistancePerSecondBase = totalDistance * 0.02
     const tangentLookAheadDistance = totalDistance * 0.006
     const finalApproachDistance = totalDistance * 0.08
 
     const curvatureSampleDistance = totalDistance * 0.1
-    const minCurveSpeedFactor = 0.5
-    const speedResponse = 1.5
+    const minCurveSpeedFactor = 0.4
+    const speedResponse = 1
 
     const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
