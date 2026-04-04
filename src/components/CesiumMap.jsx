@@ -1217,7 +1217,7 @@ export default function CesiumMap({
         if (!bboxParam) return
 
         const response = await fetch(
-          `http://localhost:3001/api/reporting-points?bbox=${encodeURIComponent(bboxParam)}`,
+          `http://api.gpxoverfly.rossinisolutions.com/api/reporting-points?bbox=${encodeURIComponent(bboxParam)}`,
           { signal: controller.signal }
         )
 
@@ -1260,7 +1260,7 @@ export default function CesiumMap({
         if (!bboxParam) return
 
         const response = await fetch(
-          `http://localhost:3001/api/airspaces?bbox=${encodeURIComponent(bboxParam)}`,
+          `http://api.gpxoverfly.rossinisolutions.com/api/airspaces?bbox=${encodeURIComponent(bboxParam)}`,
           { signal: controller.signal }
         )
 

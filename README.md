@@ -114,7 +114,7 @@ http://localhost:5173
 Il frontend si aspetta che il backend sia disponibile su:
 
 ```text
-http://localhost:3001
+http://api.gpxoverfly.rossinisolutions.com
 ```
 
 Endpoint usati:
