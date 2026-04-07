@@ -68,7 +68,7 @@ async function createOsmBuildingsTileset() {
     return Cesium.createOsmBuildings()
   }
 
-  console.warn('⚠️ OSM Buildings are not supported by this Cesium build')
+  console.warn('⚠️ Cesium OSM Buildings are not available in this Cesium build')
   return null
 }
 
@@ -831,20 +831,28 @@ function flyToPathTopDown(viewer, positions) {
   })
 }
 
-function getSupportedRecordingMimeType() {
+
+function getSupportedRecordingConfig() {
   const candidates = [
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm'
+    { mimeType: 'video/mp4;codecs=h264,aac', extension: 'mp4', needsServerConversion: false },
+    { mimeType: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', extension: 'mp4', needsServerConversion: false },
+    { mimeType: 'video/mp4', extension: 'mp4', needsServerConversion: false },
+    { mimeType: 'video/webm;codecs=vp9', extension: 'webm', needsServerConversion: true },
+    { mimeType: 'video/webm;codecs=vp8', extension: 'webm', needsServerConversion: true },
+    { mimeType: 'video/webm', extension: 'webm', needsServerConversion: true }
   ]
 
-  for (const mimeType of candidates) {
-    if (window.MediaRecorder?.isTypeSupported?.(mimeType)) {
-      return mimeType
+  for (const candidate of candidates) {
+    if (window.MediaRecorder?.isTypeSupported?.(candidate.mimeType)) {
+      return candidate
     }
   }
 
-  return ''
+  return {
+    mimeType: '',
+    extension: 'webm',
+    needsServerConversion: false
+  }
 }
 
 function sanitizeFilename(name = 'gps-overfly') {
@@ -856,16 +864,94 @@ function sanitizeFilename(name = 'gps-overfly') {
     .toLowerCase() || 'gps-overfly'
 }
 
-function downloadRecording(chunks, filenameBase = 'gps-overfly') {
-  if (!chunks?.length) return
+function buildRecordingFilename(filenameBase = 'gps-overfly', extension = 'webm') {
+  return `${sanitizeFilename(filenameBase)}.${extension}`
+}
 
-  const blob = new Blob(chunks, { type: 'video/webm' })
+function canShareFiles() {
+  return (
+    typeof navigator !== 'undefined' &&
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function'
+  )
+}
+
+async function saveBlobToDevice(blob, filename) {
+  if (!blob) return
+
+  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' })
+
+  if (canShareFiles() && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({
+        files: [file],
+        title: filename
+      })
+      return
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        console.warn('⚠️ Native share failed, falling back to download:', error)
+      }
+    }
+  }
+
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${sanitizeFilename(filenameBase)}.webm`
+  a.download = filename
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url)
+  }, 1000)
+}
+
+async function convertRecordingToMp4(blob, filenameBase = 'gps-overfly') {
+  const response = await fetch(`${BASE_API_URL}/api/recordings/convert-to-mp4?filename=${encodeURIComponent(buildRecordingFilename(filenameBase, 'webm'))}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': blob.type || 'video/webm'
+    },
+    body: blob
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(errorText || `Recording conversion failed: ${response.status}`)
+  }
+
+  return response.blob()
+}
+
+async function finalizeRecording(chunks, recordingConfig, filenameBase = 'gps-overfly') {
+  if (!chunks?.length) return
+
+  const sourceExtension = recordingConfig?.extension || 'webm'
+  const sourceMimeType =
+    recordingConfig?.mimeType ||
+    (sourceExtension === 'mp4' ? 'video/mp4' : 'video/webm')
+
+  const sourceBlob = new Blob(chunks, { type: sourceMimeType })
+
+  if (recordingConfig?.needsServerConversion) {
+    try {
+      const mp4Blob = await convertRecordingToMp4(sourceBlob, filenameBase)
+      await saveBlobToDevice(
+        mp4Blob,
+        buildRecordingFilename(filenameBase, 'mp4')
+      )
+      return
+    } catch (error) {
+      console.error('❌ MP4 conversion failed, falling back to original recording:', error)
+    }
+  }
+
+  await saveBlobToDevice(
+    sourceBlob,
+    buildRecordingFilename(filenameBase, sourceExtension)
+  )
 }
 
 function getPathBBox(points) {
@@ -958,6 +1044,7 @@ export default function CesiumMap({
   const viewerRef = useRef(null)
   const pathPositionsRef = useRef(null)
   const speedRef = useRef(speed)
+  const recordingConfigRef = useRef(getSupportedRecordingConfig())
   const cameraLookDirectionRef = useRef(cameraLookDirection)
   const cameraYawOffsetRef = useRef(0)
   const recorderRef = useRef(null)
@@ -966,8 +1053,8 @@ export default function CesiumMap({
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
-  const osmBuildingsTilesetRef = useRef(null)
   const routeWaypointEntitiesRef = useRef([])
+  const osmBuildingsTilesetRef = useRef(null)
   const [cesiumReady, setCesiumReady] = useState(false)
 
   const renderedTrackPoints = useMemo(() => {
@@ -1295,11 +1382,9 @@ export default function CesiumMap({
 
         try {
           const osmBuildingsTileset = await createOsmBuildingsTileset()
-
-          if (!cancelled && osmBuildingsTileset) {
+          if (osmBuildingsTileset && !cancelled && !viewer.isDestroyed()) {
             viewer.scene.primitives.add(osmBuildingsTileset)
             osmBuildingsTilesetRef.current = osmBuildingsTileset
-            console.log('🏙️ OSM Buildings added')
           }
         } catch (error) {
           console.error('❌ Failed to load OSM Buildings:', error)
@@ -1324,22 +1409,13 @@ export default function CesiumMap({
       }
 
       if (recordingActiveRef.current) {
-        const recorder = recorderRef.current
-        if (recorder && recorder.state !== 'inactive') {
-          recorder.stop()
-        }
+        stopRecording(false)
       }
 
       if (viewer && !viewer.isDestroyed()) {
         const osmBuildingsTileset = osmBuildingsTilesetRef.current
-
         if (osmBuildingsTileset) {
-          try {
-            viewer.scene.primitives.remove(osmBuildingsTileset)
-          } catch (error) {
-            console.warn('⚠️ Failed to remove OSM Buildings:', error)
-          }
-
+          viewer.scene.primitives.remove(osmBuildingsTileset)
           osmBuildingsTilesetRef.current = null
         }
 
@@ -1440,22 +1516,34 @@ export default function CesiumMap({
     recordingFileNameRef.current = recordingFileName
   }, [recordingFileName])
 
-  const stopRecording = (shouldDownload = true) => {
+  useEffect(() => {
+    recordingConfigRef.current = getSupportedRecordingConfig()
+  }, [])
+
+
+  const stopRecording = (shouldSave = true) => {
     const recorder = recorderRef.current
     if (!recorder || recorder.state === 'inactive') return
 
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       recordingActiveRef.current = false
 
-      if (shouldDownload) {
-        downloadRecording(
-          recordedChunksRef.current,
-          recordingFileNameRef.current
-        )
-      }
-
+      const recordedChunks = [...recordedChunksRef.current]
+      const recordingConfig = recordingConfigRef.current
       recordedChunksRef.current = []
       recorderRef.current = null
+
+      if (!shouldSave) return
+
+      try {
+        await finalizeRecording(
+          recordedChunks,
+          recordingConfig,
+          recordingFileNameRef.current
+        )
+      } catch (error) {
+        console.error('❌ Failed to save recording:', error)
+      }
     }
 
     recorder.stop()
@@ -1472,13 +1560,14 @@ export default function CesiumMap({
     }
 
     const stream = canvas.captureStream(60)
-    const mimeType = getSupportedRecordingMimeType()
+    const recordingConfig = getSupportedRecordingConfig()
+    recordingConfigRef.current = recordingConfig
 
     recordedChunksRef.current = []
 
     const recorder = new MediaRecorder(
       stream,
-      mimeType ? { mimeType } : undefined
+      recordingConfig.mimeType ? { mimeType: recordingConfig.mimeType } : undefined
     )
 
     recorder.ondataavailable = (event) => {
