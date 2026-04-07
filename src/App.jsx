@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import CesiumMap from './components/CesiumMap'
 import { parseGpxText } from './utils/parseGpx'
 import { buildFlightSamples } from './utils/buildFlightSamples'
@@ -18,32 +18,10 @@ export default function App() {
   const [interpretLastAsAlternate, setInterpretLastAsAlternate] = useState(false)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
-  const lookControlPointerIdRef = useRef(null)
 
   const trackPoints = useMemo(() => {
     return buildFlightSamples(rawPoints, 1)
   }, [rawPoints])
-
-  useEffect(() => {
-    if (!hasStarted || !cameraLookDirection) return
-
-    const release = () => {
-      setCameraLookDirection(0)
-      lookControlPointerIdRef.current = null
-    }
-
-    window.addEventListener('mouseup', release)
-    window.addEventListener('touchend', release)
-    window.addEventListener('touchcancel', release)
-    window.addEventListener('blur', release)
-
-    return () => {
-      window.removeEventListener('mouseup', release)
-      window.removeEventListener('touchend', release)
-      window.removeEventListener('touchcancel', release)
-      window.removeEventListener('blur', release)
-    }
-  }, [hasStarted, cameraLookDirection])
 
   const handleFile = async (event) => {
     try {
@@ -87,43 +65,32 @@ export default function App() {
     setCurrentPoint(null)
   }
 
-  const stopLooking = () => {
-    lookControlPointerIdRef.current = null
-    setCameraLookDirection(0)
+  const toggleLooking = (direction) => {
+    setCameraLookDirection((currentDirection) =>
+      currentDirection === direction ? 0 : direction
+    )
   }
 
-  const startLooking = (direction) => {
-    setCameraLookDirection(direction)
-  }
+  const getLookButtonStyle = (direction) => {
+    const active = cameraLookDirection === direction
 
-  const bindLookButtonProps = (direction) => ({
-    onMouseDown: (event) => {
-      event.preventDefault()
-      startLooking(direction)
-    },
-    onMouseUp: stopLooking,
-    onMouseLeave: stopLooking,
-    onTouchStart: (event) => {
-      event.preventDefault()
-      startLooking(direction)
-    },
-    onTouchEnd: stopLooking,
-    onTouchCancel: stopLooking,
-    onPointerDown: (event) => {
-      lookControlPointerIdRef.current = event.pointerId
-      startLooking(direction)
-    },
-    onPointerUp: (event) => {
-      if (lookControlPointerIdRef.current == null || lookControlPointerIdRef.current === event.pointerId) {
-        stopLooking()
-      }
-    },
-    onPointerCancel: (event) => {
-      if (lookControlPointerIdRef.current == null || lookControlPointerIdRef.current === event.pointerId) {
-        stopLooking()
-      }
+    return {
+      padding: '10px 12px',
+      borderRadius: 12,
+      border: active
+        ? '1px solid rgba(147, 197, 253, 0.95)'
+        : '1px solid rgba(255,255,255,0.12)',
+      background: active
+        ? 'rgba(59, 130, 246, 0.35)'
+        : 'rgba(255,255,255,0.08)',
+      color: '#fff',
+      fontWeight: 700,
+      cursor: 'pointer',
+      boxShadow: active
+        ? '0 0 0 1px rgba(147, 197, 253, 0.18) inset, 0 10px 24px rgba(37, 99, 235, 0.22)'
+        : 'none'
     }
-  })
+  }
 
   const overlayCardStyle = {
     background: 'rgba(15, 23, 42, 0.5)',
@@ -407,7 +374,7 @@ export default function App() {
                   marginBottom: 10
                 }}
               >
-                Hold a button to look 90° out the side window. Release to face forward again.
+                Click a button to look 90° out the side window. Click it again to face forward.
               </div>
 
               <div
@@ -418,43 +385,15 @@ export default function App() {
                 }}
               >
                 <button
-                  {...bindLookButtonProps(-1)}
-                  style={{
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    border: cameraLookDirection === -1
-                      ? '1px solid rgba(255,255,255,0.9)'
-                      : '1px solid rgba(255,255,255,0.12)',
-                    background: cameraLookDirection === -1
-                      ? 'rgba(255,255,255,0.18)'
-                      : 'rgba(255,255,255,0.08)',
-                    color: '#fff',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    touchAction: 'none'
-                  }}
+                  onClick={() => toggleLooking(-1)}
+                  style={getLookButtonStyle(-1)}
                 >
                   ◀ LOOK LEFT
                 </button>
 
                 <button
-                  {...bindLookButtonProps(1)}
-                  style={{
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    border: cameraLookDirection === 1
-                      ? '1px solid rgba(255,255,255,0.9)'
-                      : '1px solid rgba(255,255,255,0.12)',
-                    background: cameraLookDirection === 1
-                      ? 'rgba(255,255,255,0.18)'
-                      : 'rgba(255,255,255,0.08)',
-                    color: '#fff',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    touchAction: 'none'
-                  }}
+                  onClick={() => toggleLooking(1)}
+                  style={getLookButtonStyle(1)}
                 >
                   LOOK RIGHT ▶
                 </button>
