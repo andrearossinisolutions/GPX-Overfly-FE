@@ -3,7 +3,7 @@ import * as CesiumModule from 'cesium'
 
 let Cesium = null
 
-const BASE_API_URL = 'http://api.gpxoverfly.rossinisolutions.com'
+const BASE_API_URL = 'https://api.gpxoverfly.rossinisolutions.com'
 const CESIUM_CONFIG_URL = `${BASE_API_URL}/cesium`
 
 const FEET_TO_METERS = 0.3048
