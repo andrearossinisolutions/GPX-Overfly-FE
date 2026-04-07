@@ -868,46 +868,6 @@ function buildRecordingFilename(filenameBase = 'gps-overfly', extension = 'webm'
   return `${sanitizeFilename(filenameBase)}.${extension}`
 }
 
-function canShareFiles() {
-  return (
-    typeof navigator !== 'undefined' &&
-    typeof navigator.share === 'function' &&
-    typeof navigator.canShare === 'function'
-  )
-}
-
-async function saveBlobToDevice(blob, filename) {
-  if (!blob) return
-
-  const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' })
-
-  if (canShareFiles() && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({
-        files: [file],
-        title: filename
-      })
-      return
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        console.warn('⚠️ Native share failed, falling back to download:', error)
-      }
-    }
-  }
-
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-
-  setTimeout(() => {
-    URL.revokeObjectURL(url)
-  }, 1000)
-}
-
 async function convertRecordingToMp4(blob, filenameBase = 'gps-overfly') {
   const response = await fetch(`${BASE_API_URL}/api/recordings/convert-to-mp4?filename=${encodeURIComponent(buildRecordingFilename(filenameBase, 'webm'))}`, {
     method: 'POST',
@@ -926,7 +886,7 @@ async function convertRecordingToMp4(blob, filenameBase = 'gps-overfly') {
 }
 
 async function finalizeRecording(chunks, recordingConfig, filenameBase = 'gps-overfly') {
-  if (!chunks?.length) return
+  if (!chunks?.length) return null
 
   const sourceExtension = recordingConfig?.extension || 'webm'
   const sourceMimeType =
@@ -938,20 +898,19 @@ async function finalizeRecording(chunks, recordingConfig, filenameBase = 'gps-ov
   if (recordingConfig?.needsServerConversion) {
     try {
       const mp4Blob = await convertRecordingToMp4(sourceBlob, filenameBase)
-      await saveBlobToDevice(
-        mp4Blob,
-        buildRecordingFilename(filenameBase, 'mp4')
-      )
-      return
+      return {
+        blob: mp4Blob,
+        filename: buildRecordingFilename(filenameBase, 'mp4')
+      }
     } catch (error) {
       console.error('❌ MP4 conversion failed, falling back to original recording:', error)
     }
   }
 
-  await saveBlobToDevice(
-    sourceBlob,
-    buildRecordingFilename(filenameBase, sourceExtension)
-  )
+  return {
+    blob: sourceBlob,
+    filename: buildRecordingFilename(filenameBase, sourceExtension)
+  }
 }
 
 function getPathBBox(points) {
@@ -1037,6 +996,8 @@ export default function CesiumMap({
   cameraLookDirection = 0,
   onPositionChange,
   recordEnabled = false,
+  onRecordingReady,
+  onFlightComplete,
   recordingFileName = 'gps-overfly',
   interpretLastAsAlternate = false
 }) {
@@ -1050,6 +1011,7 @@ export default function CesiumMap({
   const recorderRef = useRef(null)
   const recordedChunksRef = useRef([])
   const recordingActiveRef = useRef(false)
+  const recordingStopRequestedRef = useRef(false)
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
@@ -1523,9 +1485,13 @@ export default function CesiumMap({
 
   const stopRecording = (shouldSave = true) => {
     const recorder = recorderRef.current
-    if (!recorder || recorder.state === 'inactive') return
+    if (!recorder || recorder.state === 'inactive' || recordingStopRequestedRef.current) return
+
+    recordingStopRequestedRef.current = true
 
     recorder.onstop = async () => {
+      recordingStopRequestedRef.current = false
+
       recordingActiveRef.current = false
 
       const recordedChunks = [...recordedChunksRef.current]
@@ -1536,13 +1502,17 @@ export default function CesiumMap({
       if (!shouldSave) return
 
       try {
-        await finalizeRecording(
+        const recordingResult = await finalizeRecording(
           recordedChunks,
           recordingConfig,
           recordingFileNameRef.current
         )
+
+        if (recordingResult && onRecordingReady) {
+          onRecordingReady(recordingResult)
+        }
       } catch (error) {
-        console.error('❌ Failed to save recording:', error)
+        console.error('❌ Failed to prepare recording:', error)
       }
     }
 
@@ -1578,6 +1548,7 @@ export default function CesiumMap({
 
     recorderRef.current = recorder
     recordingActiveRef.current = true
+    recordingStopRequestedRef.current = false
     recorder.start()
   }
 
@@ -1879,6 +1850,38 @@ export default function CesiumMap({
     const endBeforePoint =
       smoothedPath[Math.max(smoothedPath.length - 2, 0)] || endPoint
 
+    const finishFlight = ({ shouldPrepareRecording = true, flyTopDown = false } = {}) => {
+      if (state.stopped) return
+
+      state.stopped = true
+      state.transitioningToStart = false
+
+      if (state.animationId) {
+        cancelAnimationFrame(state.animationId)
+        state.animationId = null
+      }
+
+      if (viewer) {
+        viewer.camera.cancelFlight()
+      }
+
+      state.roll = 0
+      state.speedFactor = 1
+      cameraYawOffsetRef.current = 0
+
+      if (shouldPrepareRecording && recordEnabled && recordingActiveRef.current) {
+        stopRecording(true)
+      }
+
+      if (flyTopDown && viewer && pathPositionsRef.current) {
+        flyToPathTopDown(viewer, pathPositionsRef.current)
+      }
+
+      if (onFlightComplete) {
+        onFlightComplete()
+      }
+    }
+
     const tick = (ts) => {
       if (state.stopped) return
 
@@ -2152,12 +2155,7 @@ export default function CesiumMap({
         dynamicRoll = state.roll
 
         if (t >= 1) {
-          state.animationId = null
-
-          if (recordEnabled) {
-            stopRecording(true)
-          }
-
+          finishFlight({ shouldPrepareRecording: true, flyTopDown: false })
           return
         }
       }

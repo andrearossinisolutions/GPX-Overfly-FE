@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import CesiumMap from './components/CesiumMap'
 import { parseGpxText } from './utils/parseGpx'
 import { buildFlightSamples } from './utils/buildFlightSamples'
@@ -16,8 +16,18 @@ export default function App() {
   const [currentPoint, setCurrentPoint] = useState(null)
   const [recordEnabled, setRecordEnabled] = useState(false)
   const [interpretLastAsAlternate, setInterpretLastAsAlternate] = useState(false)
+  const [recordingResult, setRecordingResult] = useState(null)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
+
+
+  useEffect(() => {
+    return () => {
+      if (recordingResult?.url) {
+        URL.revokeObjectURL(recordingResult.url)
+      }
+    }
+  }, [recordingResult])
 
   const trackPoints = useMemo(() => {
     return buildFlightSamples(rawPoints, 1)
@@ -36,6 +46,7 @@ export default function App() {
       setTrackName(file.name)
       setHasStarted(false)
       setCameraLookDirection(0)
+      setRecordingResult(null)
     } catch (err) {
       console.error(err)
       setError(err?.message || 'Error loading GPX file')
@@ -50,6 +61,7 @@ export default function App() {
 
     setError('')
     setCameraLookDirection(0)
+    setRecordingResult(null)
     setHasStarted(true)
     setPlayNonce((n) => n + 1)
   }
@@ -63,6 +75,49 @@ export default function App() {
     setStopNonce((n) => n + 1)
     setHasStarted(false)
     setCurrentPoint(null)
+  }
+
+  const handleFlightComplete = () => {
+    setCameraLookDirection(0)
+    setHasStarted(false)
+    setCurrentPoint(null)
+  }
+
+  const handleRecordingReady = ({ blob, filename }) => {
+    if (!blob || !filename) return
+
+    setRecordingResult((current) => {
+      if (current?.url) {
+        URL.revokeObjectURL(current.url)
+      }
+
+      return {
+        blob,
+        filename,
+        url: URL.createObjectURL(blob)
+      }
+    })
+  }
+
+  const handleDownloadRecording = () => {
+    if (!recordingResult?.url || !recordingResult?.filename) return
+
+    const a = document.createElement('a')
+    a.href = recordingResult.url
+    a.download = recordingResult.filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+
+  const handleCloseRecordingModal = () => {
+    setRecordingResult((current) => {
+      if (current?.url) {
+        URL.revokeObjectURL(current.url)
+      }
+
+      return null
+    })
   }
 
   const toggleLooking = (direction) => {
@@ -112,6 +167,8 @@ export default function App() {
         cameraLookDirection={cameraLookDirection}
         onPositionChange={setCurrentPoint}
         recordEnabled={recordEnabled}
+        onRecordingReady={handleRecordingReady}
+        onFlightComplete={handleFlightComplete}
         recordingFileName={trackName ? trackName.replace(/\.gpx$/i, '-recording.gpx') : 'recording.gpx'}
         interpretLastAsAlternate={interpretLastAsAlternate}
       />
@@ -299,6 +356,82 @@ export default function App() {
                   </button>
                 </div>
               </div> }
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {recordingResult && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            background: 'rgba(2, 6, 23, 0.55)',
+            zIndex: 40
+          }}
+        >
+          <div
+            style={{
+              ...overlayCardStyle,
+              width: 'min(420px, calc(100vw - 32px))',
+              padding: 24
+            }}
+          >
+            <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>
+              Recording completed
+            </div>
+
+            <div
+              style={{
+                opacity: 0.78,
+                lineHeight: 1.5,
+                marginBottom: 18
+              }}
+            >
+              Your video is ready. Tap Download to save it to your device.
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 10
+              }}
+            >
+              <button
+                onClick={handleCloseRecordingModal}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 12,
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: 'rgba(255,255,255,0.08)',
+                  color: '#fff',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+
+              <button
+                onClick={handleDownloadRecording}
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: 12,
+                  border: 'none',
+                  background: '#fff',
+                  color: '#0f172a',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Download
+              </button>
             </div>
           </div>
         </div>
