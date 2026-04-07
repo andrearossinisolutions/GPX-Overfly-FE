@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import CesiumMap from './components/CesiumMap'
 import { parseGpxText } from './utils/parseGpx'
 import { buildFlightSamples } from './utils/buildFlightSamples'
@@ -10,6 +10,7 @@ export default function App() {
   const [playNonce, setPlayNonce] = useState(0)
   const [stopNonce, setStopNonce] = useState(0)
   const [speed, setSpeed] = useState(1)
+  const [cameraLookDirection, setCameraLookDirection] = useState(0)
   const [hasStarted, setHasStarted] = useState(false)
   const [error, setError] = useState('')
   const [currentPoint, setCurrentPoint] = useState(null)
@@ -17,10 +18,32 @@ export default function App() {
   const [interpretLastAsAlternate, setInterpretLastAsAlternate] = useState(false)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
+  const lookControlPointerIdRef = useRef(null)
 
   const trackPoints = useMemo(() => {
     return buildFlightSamples(rawPoints, 1)
   }, [rawPoints])
+
+  useEffect(() => {
+    if (!hasStarted || !cameraLookDirection) return
+
+    const release = () => {
+      setCameraLookDirection(0)
+      lookControlPointerIdRef.current = null
+    }
+
+    window.addEventListener('mouseup', release)
+    window.addEventListener('touchend', release)
+    window.addEventListener('touchcancel', release)
+    window.addEventListener('blur', release)
+
+    return () => {
+      window.removeEventListener('mouseup', release)
+      window.removeEventListener('touchend', release)
+      window.removeEventListener('touchcancel', release)
+      window.removeEventListener('blur', release)
+    }
+  }, [hasStarted, cameraLookDirection])
 
   const handleFile = async (event) => {
     try {
@@ -34,19 +57,21 @@ export default function App() {
       setRawPoints(points)
       setTrackName(file.name)
       setHasStarted(false)
+      setCameraLookDirection(0)
     } catch (err) {
       console.error(err)
-      setError(err?.message || 'Errore nel caricamento del GPX')
+      setError(err?.message || 'Error loading GPX file')
     }
   }
 
   const handlePlay = () => {
     if (!trackPoints.length) {
-      setError('Carica prima un file GPX')
+      setError('Load a GPX file first')
       return
     }
 
     setError('')
+    setCameraLookDirection(0)
     setHasStarted(true)
     setPlayNonce((n) => n + 1)
   }
@@ -56,10 +81,49 @@ export default function App() {
   }
 
   const handleStop = () => {
+    setCameraLookDirection(0)
     setStopNonce((n) => n + 1)
     setHasStarted(false)
     setCurrentPoint(null)
   }
+
+  const stopLooking = () => {
+    lookControlPointerIdRef.current = null
+    setCameraLookDirection(0)
+  }
+
+  const startLooking = (direction) => {
+    setCameraLookDirection(direction)
+  }
+
+  const bindLookButtonProps = (direction) => ({
+    onMouseDown: (event) => {
+      event.preventDefault()
+      startLooking(direction)
+    },
+    onMouseUp: stopLooking,
+    onMouseLeave: stopLooking,
+    onTouchStart: (event) => {
+      event.preventDefault()
+      startLooking(direction)
+    },
+    onTouchEnd: stopLooking,
+    onTouchCancel: stopLooking,
+    onPointerDown: (event) => {
+      lookControlPointerIdRef.current = event.pointerId
+      startLooking(direction)
+    },
+    onPointerUp: (event) => {
+      if (lookControlPointerIdRef.current == null || lookControlPointerIdRef.current === event.pointerId) {
+        stopLooking()
+      }
+    },
+    onPointerCancel: (event) => {
+      if (lookControlPointerIdRef.current == null || lookControlPointerIdRef.current === event.pointerId) {
+        stopLooking()
+      }
+    }
+  })
 
   const overlayCardStyle = {
     background: 'rgba(15, 23, 42, 0.5)',
@@ -78,6 +142,7 @@ export default function App() {
         shouldPlay={playNonce}
         stopSignal={stopNonce}
         speed={speed}
+        cameraLookDirection={cameraLookDirection}
         onPositionChange={setCurrentPoint}
         recordEnabled={recordEnabled}
         recordingFileName={trackName ? trackName.replace(/\.gpx$/i, '-recording.gpx') : 'recording.gpx'}
@@ -121,7 +186,7 @@ export default function App() {
                 GPX Overfly
               </div>
               <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
-                Carica una traccia GPX e avvia il flyover.
+                Load a GPX track and start the flyover.
               </div>
             </div> }
 
@@ -145,7 +210,7 @@ export default function App() {
                       fontWeight: 600
                     }}
                   >
-                    Carica file GPX
+                    Load GPX file
                   </label>
                   <input
                     id="gpx-file"
@@ -161,7 +226,7 @@ export default function App() {
                     opacity: trackName ? 1 : 0.75
                   }}
                 >
-                  {trackName} — {trackPoints.length} punti
+                  {trackName} — {trackPoints.length} points
                 </div>
               }
 
@@ -263,7 +328,7 @@ export default function App() {
                       cursor: trackPoints.length ? 'pointer' : 'not-allowed'
                     }}
                   >
-                    TAKEOFF
+                    TAKE OFF
                   </button>
                 </div>
               </div> }
@@ -290,7 +355,7 @@ export default function App() {
           >
             <div style={{ marginBottom: 10 }}>
               <div style={{ marginBottom: 8, fontWeight: 600 }}>
-                Velocità
+                Speed
               </div>
 
               <div
@@ -329,7 +394,75 @@ export default function App() {
               </div>
             </div>
 
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 8, fontWeight: 600 }}>
+                Window view
+              </div>
+
+              <div
+                style={{
+                  opacity: 0.72,
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  marginBottom: 10
+                }}
+              >
+                Hold a button to look 90° out the side window. Release to face forward again.
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: 8
+                }}
+              >
+                <button
+                  {...bindLookButtonProps(-1)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    border: cameraLookDirection === -1
+                      ? '1px solid rgba(255,255,255,0.9)'
+                      : '1px solid rgba(255,255,255,0.12)',
+                    background: cameraLookDirection === -1
+                      ? 'rgba(255,255,255,0.18)'
+                      : 'rgba(255,255,255,0.08)',
+                    color: '#fff',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    touchAction: 'none'
+                  }}
+                >
+                  ◀ LOOK LEFT
+                </button>
+
+                <button
+                  {...bindLookButtonProps(1)}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    border: cameraLookDirection === 1
+                      ? '1px solid rgba(255,255,255,0.9)'
+                      : '1px solid rgba(255,255,255,0.12)',
+                    background: cameraLookDirection === 1
+                      ? 'rgba(255,255,255,0.18)'
+                      : 'rgba(255,255,255,0.08)',
+                    color: '#fff',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    touchAction: 'none'
+                  }}
+                >
+                  LOOK RIGHT ▶
+                </button>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+
               <button
                 onClick={handleStop}
                 style={{

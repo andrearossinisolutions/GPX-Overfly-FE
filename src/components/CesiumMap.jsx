@@ -932,6 +932,7 @@ export default function CesiumMap({
   shouldPlay,
   stopSignal,
   speed,
+  cameraLookDirection = 0,
   onPositionChange,
   recordEnabled = false,
   recordingFileName = 'gps-overfly',
@@ -941,6 +942,8 @@ export default function CesiumMap({
   const viewerRef = useRef(null)
   const pathPositionsRef = useRef(null)
   const speedRef = useRef(speed)
+  const cameraLookDirectionRef = useRef(cameraLookDirection)
+  const cameraYawOffsetRef = useRef(0)
   const recorderRef = useRef(null)
   const recordedChunksRef = useRef([])
   const recordingActiveRef = useRef(false)
@@ -1245,6 +1248,10 @@ export default function CesiumMap({
   }, [speed])
 
   useEffect(() => {
+    cameraLookDirectionRef.current = cameraLookDirection
+  }, [cameraLookDirection])
+
+  useEffect(() => {
     let cancelled = false
     let viewer = null
 
@@ -1415,7 +1422,7 @@ export default function CesiumMap({
 
     const canvas = viewer.scene?.canvas
     if (!canvas?.captureStream || !window.MediaRecorder) {
-      console.warn('⚠️ Recording non supportato in questo browser')
+      console.warn('⚠️ Recording is not supported in this browser')
       return
     }
 
@@ -1675,6 +1682,7 @@ export default function CesiumMap({
     state.stopped = false
     state.speedFactor = 1
     state.roll = 0
+    cameraYawOffsetRef.current = 0
 
     if (state.animationId) {
       cancelAnimationFrame(state.animationId)
@@ -1701,6 +1709,7 @@ export default function CesiumMap({
 
     const bankSampleDistance = totalDistance * 0.0085
     const maxRoll = Cesium.Math.toRadians(5)
+    const lookSideYawOffset = Cesium.Math.toRadians(90)
 
     const introHighHeightOffset = 2500
     const outroHeightOffset = 2500
@@ -2022,16 +2031,28 @@ export default function CesiumMap({
       if (!current) current = startPoint
       if (!ahead) ahead = startAheadPoint
 
+      const targetCameraYawOffset = lookSideYawOffset * cameraLookDirectionRef.current
+      const yawResponse = cameraLookDirectionRef.current === 0 ? 8 : 12
+      const yawT = 1 - Math.exp(-yawResponse * dt)
+
+      cameraYawOffsetRef.current = lerp(
+        cameraYawOffsetRef.current,
+        targetCameraYawOffset,
+        yawT
+      )
+
       const destination = Cesium.Cartesian3.fromDegrees(
         current.lon,
         current.lat,
         Math.min(cameraAltitude, 4000)
       )
 
-      const heading =
+      const baseHeading =
         phase === 'arrival-level' || phase === 'outro'
           ? computeHeadingRadians(endBeforePoint, endPoint)
           : computeHeadingRadians(current, ahead)
+
+      const heading = wrapAngle(baseHeading + cameraYawOffsetRef.current)
 
       if (onPositionChange && current) {
         onPositionChange({
@@ -2120,6 +2141,7 @@ export default function CesiumMap({
 
     state.roll = 0
     state.speedFactor = 1
+    cameraYawOffsetRef.current = 0
 
     if (recordingActiveRef.current) {
       stopRecording(true)
