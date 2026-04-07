@@ -56,6 +56,22 @@ function getCesiumIfReady() {
   return cesiumReadyGlobal ? CesiumModule : null
 }
 
+
+async function createOsmBuildingsTileset() {
+  if (!Cesium) return null
+
+  if (typeof Cesium.createOsmBuildingsAsync === 'function') {
+    return Cesium.createOsmBuildingsAsync()
+  }
+
+  if (typeof Cesium.createOsmBuildings === 'function') {
+    return Cesium.createOsmBuildings()
+  }
+
+  console.warn('⚠️ OSM Buildings are not supported by this Cesium build')
+  return null
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
@@ -950,6 +966,7 @@ export default function CesiumMap({
   const recordingFileNameRef = useRef(recordingFileName)
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
+  const osmBuildingsTilesetRef = useRef(null)
   const routeWaypointEntitiesRef = useRef([])
   const [cesiumReady, setCesiumReady] = useState(false)
 
@@ -1275,6 +1292,19 @@ export default function CesiumMap({
 
         viewer.scene.globe.depthTestAgainstTerrain = true
         viewer.resolutionScale = 1.5
+
+        try {
+          const osmBuildingsTileset = await createOsmBuildingsTileset()
+
+          if (!cancelled && osmBuildingsTileset) {
+            viewer.scene.primitives.add(osmBuildingsTileset)
+            osmBuildingsTilesetRef.current = osmBuildingsTileset
+            console.log('🏙️ OSM Buildings added')
+          }
+        } catch (error) {
+          console.error('❌ Failed to load OSM Buildings:', error)
+        }
+
         viewerRef.current = viewer
         window.viewer = viewer
         setCesiumReady(true)
@@ -1300,7 +1330,22 @@ export default function CesiumMap({
         }
       }
 
-      if (viewer && !viewer.isDestroyed()) viewer.destroy()
+      if (viewer && !viewer.isDestroyed()) {
+        const osmBuildingsTileset = osmBuildingsTilesetRef.current
+
+        if (osmBuildingsTileset) {
+          try {
+            viewer.scene.primitives.remove(osmBuildingsTileset)
+          } catch (error) {
+            console.warn('⚠️ Failed to remove OSM Buildings:', error)
+          }
+
+          osmBuildingsTilesetRef.current = null
+        }
+
+        viewer.destroy()
+      }
+
       viewerRef.current = null
     }
   }, [])
