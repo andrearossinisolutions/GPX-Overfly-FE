@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react'
-import { initCesium } from '../cesiumInit'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import * as CesiumModule from 'cesium'
 
 let Cesium = null
+
+const BASE_API_URL = 'http://api.gpxoverfly.rossinisolutions.com'
+const CESIUM_CONFIG_URL = `${BASE_API_URL}/cesium`
 
 const FEET_TO_METERS = 0.3048
 const CAMERA_ABOVE_TRACK_FEET = 500
@@ -12,6 +15,46 @@ const MIN_TRACK_CLEARANCE_METERS = 50
 const PROFILE_START_GROUND_HOLD = 0.01
 const PROFILE_CLIMB_END = 0.06
 const PROFILE_DESCENT_START = 0.90
+
+let cesiumInitPromise = null
+let cesiumReadyGlobal = false
+
+async function initCesiumFromBackend() {
+  if (cesiumReadyGlobal) return CesiumModule
+
+  if (!cesiumInitPromise) {
+    cesiumInitPromise = fetch(CESIUM_CONFIG_URL)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load Cesium config: ${response.status}`)
+        }
+
+        const data = await response.json()
+        const token = data?.cesiumApiKey
+
+        if (!token) {
+          throw new Error('Missing cesiumApiKey in /cesium response')
+        }
+
+        CesiumModule.Ion.defaultAccessToken = token
+        cesiumReadyGlobal = true
+        console.log('✅ Cesium initialized from backend /cesium')
+        return CesiumModule
+      })
+      .catch((error) => {
+        cesiumInitPromise = null
+        cesiumReadyGlobal = false
+        console.error('❌ Cesium init failed:', error)
+        throw error
+      })
+  }
+
+  return cesiumInitPromise
+}
+
+function getCesiumIfReady() {
+  return cesiumReadyGlobal ? CesiumModule : null
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -905,6 +948,7 @@ export default function CesiumMap({
   const reportingPointEntitiesRef = useRef([])
   const airspaceEntitiesRef = useRef([])
   const routeWaypointEntitiesRef = useRef([])
+  const [cesiumReady, setCesiumReady] = useState(false)
 
   const renderedTrackPoints = useMemo(() => {
     return (trackPoints || []).map(enrichPointWithAltitude)
@@ -1201,6 +1245,60 @@ export default function CesiumMap({
   }, [speed])
 
   useEffect(() => {
+    let cancelled = false
+    let viewer = null
+
+    const setup = async () => {
+      if (!containerRef.current || viewerRef.current) return
+
+      try {
+        Cesium = await initCesiumFromBackend()
+        if (cancelled || !containerRef.current || viewerRef.current) return
+
+        viewer = new Cesium.Viewer(containerRef.current, {
+          terrain: Cesium.Terrain.fromWorldTerrain(),
+          animation: false,
+          timeline: false,
+          baseLayerPicker: true,
+          geocoder: true,
+          sceneModePicker: false,
+          infoBox: false,
+          selectionIndicator: false
+        })
+
+        viewer.scene.globe.depthTestAgainstTerrain = true
+        viewer.resolutionScale = 1.5
+        viewerRef.current = viewer
+        window.viewer = viewer
+        setCesiumReady(true)
+      } catch (error) {
+        console.error('❌ Viewer init failed:', error)
+      }
+    }
+
+    setup()
+
+    return () => {
+      cancelled = true
+      setCesiumReady(false)
+
+      if (flightRef.current.animationId) {
+        cancelAnimationFrame(flightRef.current.animationId)
+      }
+
+      if (recordingActiveRef.current) {
+        const recorder = recorderRef.current
+        if (recorder && recorder.state !== 'inactive') {
+          recorder.stop()
+        }
+      }
+
+      if (viewer && !viewer.isDestroyed()) viewer.destroy()
+      viewerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     const viewer = viewerRef.current
     if (!viewer || !renderedTrackPoints?.length) {
       clearReportingPoints()
@@ -1217,7 +1315,7 @@ export default function CesiumMap({
         if (!bboxParam) return
 
         const response = await fetch(
-          `http://api.gpxoverfly.rossinisolutions.com/api/reporting-points?bbox=${encodeURIComponent(bboxParam)}`,
+          `${BASE_API_URL}/api/reporting-points?bbox=${encodeURIComponent(bboxParam)}`,
           { signal: controller.signal }
         )
 
@@ -1260,7 +1358,7 @@ export default function CesiumMap({
         if (!bboxParam) return
 
         const response = await fetch(
-          `http://api.gpxoverfly.rossinisolutions.com/api/airspaces?bbox=${encodeURIComponent(bboxParam)}`,
+          `${BASE_API_URL}/api/airspaces?bbox=${encodeURIComponent(bboxParam)}`,
           { signal: controller.signal }
         )
 
@@ -1343,45 +1441,10 @@ export default function CesiumMap({
   }
 
   useEffect(() => {
-    Cesium = initCesium()
-
-    if (!containerRef.current || viewerRef.current) return
-
-    const viewer = new Cesium.Viewer(containerRef.current, {
-      terrain: Cesium.Terrain.fromWorldTerrain(),
-      animation: false,
-      timeline: false,
-      baseLayerPicker: true,
-      geocoder: true,
-      sceneModePicker: false,
-      infoBox: false,
-      selectionIndicator: false
-    })
-
-    viewer.scene.globe.depthTestAgainstTerrain = true
-    viewer.resolutionScale = 1.5
-    viewerRef.current = viewer
-    window.viewer = viewer
-
-    return () => {
-      if (flightRef.current.animationId) {
-        cancelAnimationFrame(flightRef.current.animationId)
-      }
-
-      if (recordingActiveRef.current) {
-        stopRecording(false)
-      }
-
-      if (!viewer.isDestroyed()) viewer.destroy()
-      viewerRef.current = null
-    }
-  }, [])
-
-  useEffect(() => {
     const viewer = viewerRef.current
-    Cesium = initCesium()
+    Cesium = getCesiumIfReady()
 
-    if (!viewer) return
+    if (!viewer || !Cesium || !cesiumReady) return
 
     viewer.entities.removeAll()
     pathPositionsRef.current = null
@@ -1596,14 +1659,17 @@ export default function CesiumMap({
     navigableTrackPoints,
     renderedTrackPoints,
     routeDeclaredAltitudeMeters,
-    endpointProtectedPoints
+    endpointProtectedPoints,
+    cesiumReady
   ])
 
   useEffect(() => {
     const viewer = viewerRef.current
-    Cesium = initCesium()
+    Cesium = getCesiumIfReady()
 
-    if (!viewer || !smoothedPath?.length || !shouldPlay) return
+    if (!viewer || !Cesium || !cesiumReady || !smoothedPath?.length || !shouldPlay) {
+      return
+    }
 
     const state = flightRef.current
     state.stopped = false
@@ -2029,7 +2095,8 @@ export default function CesiumMap({
     pathDistances,
     recordEnabled,
     onPositionChange,
-    routeDeclaredAltitudeMeters
+    routeDeclaredAltitudeMeters,
+    cesiumReady
   ])
 
   useEffect(() => {
