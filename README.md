@@ -1,16 +1,20 @@
 # GPX Overfly Frontend
 
-Frontend React + Vite per visualizzare una traccia GPX come flyover 3D interattivo su mappa Cesium.
+React + Vite frontend to display a GPX track as an interactive 3D flyover on a Cesium map.
 
-Permette di:
+It allows you to:
 
-- caricare file GPX
-- visualizzare il percorso in 3D
-- avviare un flyover cinematico
-- regolare la velocità durante il volo
-- registrare il flyover in video `.webm`
-- visualizzare reporting points VFR e airspaces da backend OpenAIP proxy
-- mostrare una mini-mappa 2D durante la navigazione
+- upload GPX files
+- view the route in 3D
+- start a kinematic flyover
+- adjust speed during flight
+- record the flyover as a .webm video
+- view VFR reporting points and airspaces from the OpenAIP proxy backend
+- display a 2D mini-map during navigation
+
+Use it directly at: <https://gpxoverfly.rossinisolutions.com/>
+
+Feel free to contribute opening a PR!
 
 ---
 
@@ -22,72 +26,72 @@ Permette di:
 
 ---
 
-## Funzionalità principali
+## Main Features
 
-### Visualizzazione GPX
+### GPX View
 
-- parsing del file GPX
-- supporto a tracce e route point
-- costruzione del percorso per il rendering 3D
+- GPX file parsing
+- track and route point support
+- route construction for 3D rendering
 
-### Flyover 3D
+### 3D Flyover
 
-- intro cinematica dall’alto
-- camera orientata lungo la traccia
-- smoothing delle curve
-- banking in virata
-- rallentamento in curva
-- final approach e outro
+- kinematic intro from above
+- camera oriented along the track
+- curve smoothing
+- banking during turns
+- slowing down during turns
+- final approach and outro
 
 ### UI
 
-- overlay iniziale con upload file
-- pulsante `TAKEOFF`
-- checkbox `Record`
-- overlay compatto durante il playback
-- pulsante `LAND NOW`
-- controllo velocità con step:
-  - `0.25x`
-  - `0.5x`
-  - `1x`
-  - `2x`
-  - `4x`
+- overlay Initial with file upload
+- `TAKEOFF` button
+- `Record` checkbox
+- Compact overlay during playback
+- `LAND NOW` button
+- Speed ​​control with steps:
+- `0.25x`
+- `0.5x`
+- `1x`
+- `2x`
+- `4x`
 
-### Registrazione video
+### Video Recording
 
-- registrazione del canvas Cesium tramite `MediaRecorder`
-- export automatico a fine flyover
-- nome file video uguale al file GPX caricato, senza estensione `.gpx`
+- Recording of the Cesium canvas via `MediaRecorder`
+- Automatic export at the end of the flyover
+- Video file name identical to the uploaded GPX file, without the `.gpx` extension
 
-### Dati aeronautici
+### Aeronautical Data
 
-- reporting points VFR da backend OpenAIP
-- airspaces caricati via backend
-- supporto attuale per:
-  - CTR (`type: 4`)
-  - ATZ (`type: 13`)
-  - MATZ (`type: 14`)
-- struttura estendibile per aggiungere altri tipi di airspace
+- VFR reporting points from OpenAIP backend
+- Airspaces uploaded via backend
+- Current support for:
+- CTR (`type: 4`)
+- ATZ (`type: 13`)
+- MATZ (`type: 14`)
+- Extendable structure to add other airspace types
 
-### Mini-mappa 2D
+### 2D Mini-map
 
-- visualizzazione della traccia in piccolo
-- marker della posizione corrente durante il volo
+- Small track display
+- Current position marker during the flyover flight
 
 ---
 
-## Requisiti
+## Requirements
 
 - Node.js 20+
-- backend OpenAIP attivo
-- browser moderno con supporto:
-  - WebGL
-  - MediaRecorder
-  - `captureStream()`
+- OpenAIP backend enabled
+- Modern browser with support:
+- WebGL
+- MediaRecorder
+- `captureStream()`
 
 ---
 
-## Installazione
+## Installation
 
 ```bash
 npm install
@@ -95,13 +99,13 @@ npm install
 
 ---
 
-## Avvio
+## Startup
 
 ```bash
 npm run dev
 ```
 
-Frontend disponibile su:
+Frontend available at:
 
 ```text
 http://localhost:5173
@@ -109,104 +113,104 @@ http://localhost:5173
 
 ---
 
-## Configurazione
+## Configuration
 
-Il frontend si aspetta che il backend sia disponibile su:
+The frontend expects the backend to be available at:
 
 ```text
 http://api.gpxoverfly.rossinisolutions.com
 ```
 
-Endpoint usati:
+Endpoints used:
 
 - `/api/reporting-points`
 - `/api/airspaces`
 
-Se il backend gira su un host o porta diversa, aggiornare gli URL `fetch(...)` nel codice.
+If the backend is running on a different host or port, update the URLs `fetch(...)` in the code.
 
 ---
 
-## Struttura progetto
+## Project Structure
 
 ```text
 src/
-  components/
-    CesiumMap.jsx
-    MiniMap2D.jsx
-  utils/
-    parseGpx.js
-    buildFlightSamples.js
-  App.jsx
-  main.jsx
+components/
+CesiumMap.jsx
+MiniMap2D.jsx
+utils/
+parseGpx.js
+buildFlightSamples.js
+App.jsx
+main.jsx
 ```
 
 ---
 
-## Comportamento applicativo
+## Application Behavior
 
-1. L’utente carica un file GPX
-2. La traccia viene parseata e campionata
-3. Cesium mostra:
-   - percorso
-   - Takeoff / Landing
-   - reporting points VFR
-   - airspaces
-4. Alla pressione di `TAKEOFF`:
-   - la camera vola verso il punto iniziale
-   - parte il flyover
-5. Se `Record` è attivo:
-   - parte la registrazione
-   - il video viene scaricato automaticamente alla fine
+1. The user uploads a GPX file
+2. The track is parsed and sampled
+3. Cesium displays:
+- route
+- Takeoff / Landing
+- VFR reporting points
+- airspaces
+4. When `TAKEOFF` is pressed:
+- the camera flies to the starting point
+- the flyover starts
+5. If `Record` is active:
+- recording starts
+- the video is automatically downloaded at the end
 
 ---
 
-## Airspaces supportati
+## Supported airspaces
 
 ### CTR
 
-- colore blu
-- volume 3D
-- outline a terra continua
+- blue color
+- 3D volume
+- continuous ground outline
 
 ### ATZ / MATZ
 
-- colore blu
-- volume 3D
-- outline a terra tratteggiata
+- blue color
+- 3D volume
+- dotted ground outline
 
 ### P / D
 
-- colore rosso
-- volume 3D
-- outline a terra continua
+- red color
+- 3D volume
+- solid ground outline
 
-La struttura styling è pensata per essere facilmente estesa ad altri tipi.
+The styling structure is designed to be easily extended to other types.
 
 ---
 
-## Note tecniche
+## Technical Notes
 
-- il percorso è smussato solo negli angoli
-- i rettilinei restano inalterati
-- il cambio velocità non riavvia il flyover
-- la camera torna alla vista top-down allo stop
-- la registrazione usa la risoluzione corrente del canvas Cesium
+- the path is smoothed only in the corners
+- straights remain unchanged
+- changing speed does not restart the flyover
+- the camera returns to top-down view when stopped
+- recording uses the current Cesium canvas resolution
 
 ---
 
 ## Roadmap
 
-- TMA / CTA con colori dedicati
-- label avanzate sugli airspaces
-- filtering airspaces per vicinanza alla traccia
-- esportazione video a qualità configurabile
-- export frame-by-frame
-- meteo aeronautico
-- ostacoli e terrain clearance
-- mini-mappa con tiles reali
+- TMA / CTA with dedicated colors
+- advanced airspace labels
+- airspace filtering by proximity to the track
+- configurable quality video export
+- frame-by-frame export
+- aeronautical weather
+- obstacle and terrain clearance
+- mini-map with real tiles
 
 ---
 
-## Licenza
+## License
 
 MIT
