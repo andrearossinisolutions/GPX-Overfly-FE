@@ -71,8 +71,8 @@ export default function MiniMap2D({
     <div
       style={{
         position: 'fixed',
-        left: 16,
-        bottom: 16,
+        left: 12,
+        bottom: 74,
         zIndex: 35,
         width: 220,
         height: 220,

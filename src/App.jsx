@@ -17,9 +17,11 @@ export default function App() {
   const [recordEnabled, setRecordEnabled] = useState(false)
   const [interpretLastAsAlternate, setInterpretLastAsAlternate] = useState(false)
   const [recordingResult, setRecordingResult] = useState(null)
+  const [showMiniMap, setShowMiniMap] = useState(false)
+  const [showSpeedPanel, setShowSpeedPanel] = useState(false)
+  const [showViewPanel, setShowViewPanel] = useState(false)
 
   const speedOptions = [0.25, 0.5, 1, 2, 4]
-
 
   useEffect(() => {
     return () => {
@@ -33,6 +35,46 @@ export default function App() {
     return buildFlightSamples(rawPoints, 1)
   }, [rawPoints])
 
+  const resetFlightUi = () => {
+    setCameraLookDirection(0)
+    setShowMiniMap(false)
+    setShowSpeedPanel(false)
+    setShowViewPanel(false)
+  }
+
+  const toggleMiniMap = () => {
+    setShowMiniMap((current) => {
+      const next = !current
+      if (next) {
+        setShowSpeedPanel(false)
+        setShowViewPanel(false)
+      }
+      return next
+    })
+  }
+
+  const toggleSpeedPanel = () => {
+    setShowSpeedPanel((current) => {
+      const next = !current
+      if (next) {
+        setShowMiniMap(false)
+        setShowViewPanel(false)
+      }
+      return next
+    })
+  }
+
+  const toggleViewPanel = () => {
+    setShowViewPanel((current) => {
+      const next = !current
+      if (next) {
+        setShowMiniMap(false)
+        setShowSpeedPanel(false)
+      }
+      return next
+    })
+  }
+
   const handleFile = async (event) => {
     try {
       setError('')
@@ -45,7 +87,7 @@ export default function App() {
       setRawPoints(points)
       setTrackName(file.name)
       setHasStarted(false)
-      setCameraLookDirection(0)
+      resetFlightUi()
       setRecordingResult(null)
     } catch (err) {
       console.error(err)
@@ -60,7 +102,7 @@ export default function App() {
     }
 
     setError('')
-    setCameraLookDirection(0)
+    resetFlightUi()
     setRecordingResult(null)
     setHasStarted(true)
     setPlayNonce((n) => n + 1)
@@ -71,14 +113,14 @@ export default function App() {
   }
 
   const handleStop = () => {
-    setCameraLookDirection(0)
+    resetFlightUi()
     setStopNonce((n) => n + 1)
     setHasStarted(false)
     setCurrentPoint(null)
   }
 
   const handleFlightComplete = () => {
-    setCameraLookDirection(0)
+    resetFlightUi()
     setHasStarted(false)
     setCurrentPoint(null)
   }
@@ -157,8 +199,48 @@ export default function App() {
     WebkitBackdropFilter: 'blur(12px)'
   }
 
+  const floatingButtonStyle = (active = false, danger = false) => ({
+    minWidth: 74,
+    padding: '10px 12px',
+    borderRadius: 14,
+    border: active
+      ? '1px solid rgba(255,255,255,0.9)'
+      : danger
+        ? '1px solid rgba(248, 113, 113, 0.4)'
+        : '1px solid rgba(255,255,255,0.12)',
+    background: active
+      ? 'rgba(255,255,255,0.18)'
+      : danger
+        ? 'rgba(127, 29, 29, 0.45)'
+        : 'rgba(15, 23, 42, 0.65)',
+    color: '#fff',
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: 'pointer',
+    boxShadow: '0 12px 30px rgba(0,0,0,0.28)',
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)'
+  })
+
+  const floatingPanelStyle = {
+    ...overlayCardStyle,
+    width: 'min(320px, calc(100vw - 24px))',
+    padding: 14
+  }
+
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden' }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .gpx-mini-map-shift {
+            position: fixed;
+            right: 16px;
+            bottom: 88px;
+            z-index: 26;
+          }
+        }
+      `}</style>
+
       <CesiumMap
         trackPoints={trackPoints}
         shouldPlay={playNonce}
@@ -173,11 +255,13 @@ export default function App() {
         interpretLastAsAlternate={interpretLastAsAlternate}
       />
 
-      <MiniMap2D
-        points={trackPoints}
-        currentPoint={currentPoint}
-        visible={hasStarted && trackPoints.length > 0}
-      />
+      <div className="gpx-mini-map-shift">
+        <MiniMap2D
+          points={trackPoints}
+          currentPoint={currentPoint}
+          visible={hasStarted && showMiniMap && !showSpeedPanel && !showViewPanel && trackPoints.length > 0}
+        />
+      </div>
 
       {!hasStarted && (
         <div
@@ -199,20 +283,22 @@ export default function App() {
               pointerEvents: 'auto'
             }}
           >
-            { !trackName && <div style={{ marginBottom: 18 }}>
-              <div
-                style={{
-                  fontSize: 28,
-                  fontWeight: 700,
-                  marginBottom: 8
-                }}
-              >
-                GPX Overfly
+            {!trackName && (
+              <div style={{ marginBottom: 18 }}>
+                <div
+                  style={{
+                    fontSize: 28,
+                    fontWeight: 700,
+                    marginBottom: 8
+                  }}
+                >
+                  GPX Overfly
+                </div>
+                <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
+                  Load a GPX track and start the flyover.
+                </div>
               </div>
-              <div style={{ opacity: 0.5, lineHeight: 1.45 }}>
-                Load a GPX track and start the flyover.
-              </div>
-            </div> }
+            )}
 
             <div
               style={{
@@ -220,8 +306,8 @@ export default function App() {
                 gap: 16
               }}
             >
-              {!trackName
-                ?<div>
+              {!trackName ? (
+                <div>
                   <label
                     htmlFor="gpx-file"
                     style={{
@@ -244,7 +330,8 @@ export default function App() {
                     style={{ display: 'none' }}
                   />
                 </div>
-                : <div
+              ) : (
+                <div
                   style={{
                     minHeight: 22,
                     opacity: trackName ? 1 : 0.75
@@ -252,7 +339,7 @@ export default function App() {
                 >
                   {trackName} — {trackPoints.length} points
                 </div>
-              }
+              )}
 
               {error && (
                 <div
@@ -268,99 +355,100 @@ export default function App() {
                 </div>
               )}
 
-              { trackName && <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
-                  marginTop: 4
-                }}
-              >
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 14,
-                    opacity: 0.9,
-                    pointerEvents: trackName ? 'auto' : 'none'
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={interpretLastAsAlternate}
-                    onChange={(e) => setInterpretLastAsAlternate(e.target.checked)}
-                    disabled={!trackName}
-                    style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
-                  />
-                  Last point is alternate
-                </label>
-                
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 14,
-                    opacity: 0.9,
-                    pointerEvents: trackName ? 'auto' : 'none'
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={recordEnabled}
-                    onChange={(e) => setRecordEnabled(e.target.checked)}
-                    disabled={!trackName}
-                    style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
-                  />
-                  Record
-                </label>
-
+              {trackName && (
                 <div
                   style={{
                     display: 'flex',
-                    justifyContent: 'flex-end',
-                    gap: 12
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginTop: 4
                   }}
                 >
-                  <button
-                    onClick={handleReset}
+                  <label
                     style={{
-                      padding: '12px 18px',
-                      borderRadius: 12,
-                      border: 'none',
-                      background: '#fff',
-                      color: '#0f172a',
-                      fontWeight: 700,
-                      cursor: 'pointer'
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 14,
+                      opacity: 0.9,
+                      pointerEvents: trackName ? 'auto' : 'none'
                     }}
                   >
-                    Unload
-                  </button>
+                    <input
+                      type="checkbox"
+                      checked={interpretLastAsAlternate}
+                      onChange={(e) => setInterpretLastAsAlternate(e.target.checked)}
+                      disabled={!trackName}
+                      style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
+                    />
+                    Last point is alternate
+                  </label>
 
-                  <button
-                    onClick={handlePlay}
-                    disabled={!trackPoints.length}
+                  <label
                     style={{
-                      padding: '12px 18px',
-                      borderRadius: 12,
-                      border: 'none',
-                      background: trackPoints.length ? '#fff' : 'rgba(255,255,255,0.25)',
-                      color: '#0f172a',
-                      fontWeight: 700,
-                      cursor: trackPoints.length ? 'pointer' : 'not-allowed'
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 14,
+                      opacity: 0.9,
+                      pointerEvents: trackName ? 'auto' : 'none'
                     }}
                   >
-                    TAKE OFF
-                  </button>
+                    <input
+                      type="checkbox"
+                      checked={recordEnabled}
+                      onChange={(e) => setRecordEnabled(e.target.checked)}
+                      disabled={!trackName}
+                      style={{ cursor: trackName ? 'pointer' : 'not-allowed' }}
+                    />
+                    Record
+                  </label>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'flex-end',
+                      gap: 12
+                    }}
+                  >
+                    <button
+                      onClick={handleReset}
+                      style={{
+                        padding: '12px 18px',
+                        borderRadius: 12,
+                        border: 'none',
+                        background: '#fff',
+                        color: '#0f172a',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Unload
+                    </button>
+
+                    <button
+                      onClick={handlePlay}
+                      disabled={!trackPoints.length}
+                      style={{
+                        padding: '12px 18px',
+                        borderRadius: 12,
+                        border: 'none',
+                        background: trackPoints.length ? '#fff' : 'rgba(255,255,255,0.25)',
+                        color: '#0f172a',
+                        fontWeight: 700,
+                        cursor: trackPoints.length ? 'pointer' : 'not-allowed'
+                      }}
+                    >
+                      TAKE OFF
+                    </button>
+                  </div>
                 </div>
-              </div> }
+              )}
             </div>
           </div>
         </div>
       )}
-
 
       {recordingResult && (
         <div
@@ -438,120 +526,146 @@ export default function App() {
       )}
 
       {hasStarted && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 16,
-            right: 16,
-            zIndex: 30
-          }}
-        >
+        <>
+          {showSpeedPanel && (
+            <div
+              style={{
+                position: 'fixed',
+                right: 12,
+                bottom: 74,
+                zIndex: 30
+              }}
+            >
+              <div style={floatingPanelStyle}>
+                <div style={{ marginBottom: 8, fontWeight: 600 }}>Speed</div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 6,
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  {speedOptions.map((option) => {
+                    const active = speed === option
+
+                    return (
+                      <button
+                        key={option}
+                        onClick={() => setSpeed(option)}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 10,
+                          border: active
+                            ? '1px solid rgba(255,255,255,0.9)'
+                            : '1px solid rgba(255,255,255,0.12)',
+                          background: active
+                            ? 'rgba(255,255,255,0.18)'
+                            : 'rgba(255,255,255,0.06)',
+                          color: '#fff',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          minWidth: 52
+                        }}
+                      >
+                        {option}x
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showViewPanel && (
+            <div
+              style={{
+                position: 'fixed',
+                right: 12,
+                bottom: 74,
+                zIndex: 30
+              }}
+            >
+              <div style={floatingPanelStyle}>
+                <div style={{ marginBottom: 8, fontWeight: 600 }}>Window view</div>
+
+                <div
+                  style={{
+                    opacity: 0.72,
+                    fontSize: 13,
+                    lineHeight: 1.45,
+                    marginBottom: 10
+                  }}
+                >
+                  Click a button to look 90° out the side window. Click it again to face forward.
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 8
+                  }}
+                >
+                  <button
+                    onClick={() => toggleLooking(-1)}
+                    style={getLookButtonStyle(-1)}
+                  >
+                    ◀ LOOK LEFT
+                  </button>
+
+                  <button
+                    onClick={() => toggleLooking(1)}
+                    style={getLookButtonStyle(1)}
+                  >
+                    LOOK RIGHT ▶
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div
             style={{
-              ...overlayCardStyle,
-              padding: 14,
-              minWidth: 280
+              position: 'fixed',
+              right: 12,
+              bottom: 30,
+              zIndex: 31,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, auto)',
+              gap: 8,
+              alignItems: 'center'
             }}
           >
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ marginBottom: 8, fontWeight: 600 }}>
-                Speed
-              </div>
+            <button
+              onClick={toggleMiniMap}
+              style={floatingButtonStyle(showMiniMap && !showSpeedPanel && !showViewPanel)}
+            >
+              Map
+            </button>
 
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 6,
-                  flexWrap: 'wrap'
-                }}
-              >
-                {speedOptions.map((option) => {
-                  const active = speed === option
+            <button
+              onClick={toggleSpeedPanel}
+              style={floatingButtonStyle(showSpeedPanel)}
+            >
+              Speed
+            </button>
 
-                  return (
-                    <button
-                      key={option}
-                      onClick={() => setSpeed(option)}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: 10,
-                        border: active
-                          ? '1px solid rgba(255,255,255,0.9)'
-                          : '1px solid rgba(255,255,255,0.12)',
-                        background: active
-                          ? 'rgba(255,255,255,0.18)'
-                          : 'rgba(255,255,255,0.06)',
-                        color: '#fff',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        minWidth: 52
-                      }}
-                    >
-                      {option}x
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+            <button
+              onClick={toggleViewPanel}
+              style={floatingButtonStyle(showViewPanel)}
+            >
+              View
+            </button>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ marginBottom: 8, fontWeight: 600 }}>
-                Window view
-              </div>
-
-              <div
-                style={{
-                  opacity: 0.72,
-                  fontSize: 13,
-                  lineHeight: 1.45,
-                  marginBottom: 10
-                }}
-              >
-                Click a button to look 90° out the side window. Click it again to face forward.
-              </div>
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 8
-                }}
-              >
-                <button
-                  onClick={() => toggleLooking(-1)}
-                  style={getLookButtonStyle(-1)}
-                >
-                  ◀ LOOK LEFT
-                </button>
-
-                <button
-                  onClick={() => toggleLooking(1)}
-                  style={getLookButtonStyle(1)}
-                >
-                  LOOK RIGHT ▶
-                </button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-
-              <button
-                onClick={handleStop}
-                style={{
-                  padding: '10px 14px',
-                  borderRadius: 12,
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  background: 'rgba(255,255,255,0.08)',
-                  color: '#fff',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                LAND NOW
-              </button>
-            </div>
+            <button
+              onClick={handleStop}
+              style={floatingButtonStyle(false, true)}
+            >
+              Land
+            </button>
           </div>
-        </div>
+        </>
       )}
     </div>
   )
